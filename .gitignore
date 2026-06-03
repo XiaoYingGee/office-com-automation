@@ -1,0 +1,49 @@
+# ---- Office 临时/锁文件 ----
+~$*
+*.tmp
+*.laccdb
+
+# ---- 生成的产物（基准/任务输出） ----
+*.xlsx
+*.xlsm
+*.xls
+*.docx
+*.pptx
+*.pdf
+!assets/sample-data/**        # 样例数据若需入库，放这里并显式保留
+
+# ---- .NET / C# ----
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# ---- Python ----
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+# pywin32 早绑定缓存
+gen_py/
+
+# ---- C++ ----
+*.obj
+*.exe
+*.dll
+*.ilk
+*.pdb
+Debug/
+Release/
+x64/
+
+# ---- 基准结果（按需保留，默认忽略本地草稿） ----
+benchmarks/results/*.local.*
+
+# ---- 编辑器/系统 ----
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store
