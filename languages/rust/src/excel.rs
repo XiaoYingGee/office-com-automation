@@ -83,6 +83,15 @@ impl ExcelApp {
         Ok(())
     }
 
+    /// Open the workbook at `path` if it exists, otherwise create a new blank workbook.
+    pub fn open_or_create(&self, path: &str) -> Result<Dispatch> {
+        if std::path::Path::new(path).exists() {
+            self.open_workbook(path)
+        } else {
+            self.add_workbook()
+        }
+    }
+
     /// The application's top-level window handle (used by E12 to find the PID).
     pub fn hwnd(&self) -> Result<i64> {
         Ok(self.app.get("Hwnd")?.as_f64().unwrap_or(0.0) as i64)
