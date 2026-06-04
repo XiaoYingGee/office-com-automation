@@ -42,6 +42,24 @@ impl OpResponse {
     pub fn err(error: ExcelError) -> Self {
         Self { ok: false, result: None, error: Some(error) }
     }
+
+    /// Validates that the response fields are internally consistent.
+    /// Returns `Err` if:
+    /// - `ok == true` but an error is present
+    /// - `ok == false` but a result is present
+    /// - `ok == false` but no error is present
+    pub fn validate(&self) -> Result<(), String> {
+        if self.ok && self.error.is_some() {
+            return Err("ok response must not carry an error".into());
+        }
+        if !self.ok && self.result.is_some() {
+            return Err("error response must not carry a result".into());
+        }
+        if !self.ok && self.error.is_none() {
+            return Err("error response must carry an error".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -80,12 +98,27 @@ mod tests {
         let back = serde_json::to_string(&req).unwrap();
         let req2: OpRequest = serde_json::from_str(&back).unwrap();
         assert_eq!(req, req2);
+
+        // Minimal request: target/save_as must be absent from serialized output
+        let minimal: OpRequest = serde_json::from_str(r#"{"op":"range.read","path":"x.xlsx"}"#).unwrap();
+        assert!(minimal.target.is_none());
+        assert!(minimal.save_as.is_none());
+        let minimal_json = serde_json::to_string(&minimal).unwrap();
+        assert!(!minimal_json.contains("\"target\""), "target must be omitted when None");
+        assert!(!minimal_json.contains("\"save_as\""), "save_as must be omitted when None");
     }
 
     #[test]
     fn op_response_serializes_ok_and_err() {
         let ok = OpResponse::ok(serde_json::json!({"value":"hi"}));
-        assert!(serde_json::to_string(&ok).unwrap().contains("\"ok\":true"));
+        let ok_str = serde_json::to_string(&ok).unwrap();
+        assert!(ok_str.contains("\"ok\":true"));
+        // Structural round-trip check for ok response
+        let ok_rt: OpResponse = serde_json::from_str(&ok_str).unwrap();
+        assert!(ok_rt.ok);
+        assert!(ok_rt.result.is_some());
+        assert!(ok_rt.error.is_none());
+
         let err = OpResponse::err(ExcelError {
             category: ErrorCategory::FileNotFound,
             code: 2,
@@ -95,5 +128,17 @@ mod tests {
         let s = serde_json::to_string(&err).unwrap();
         assert!(s.contains("\"ok\":false"));
         assert!(s.contains("FileNotFound"));
+        // Structural round-trip check for err response
+        let err_rt: OpResponse = serde_json::from_str(&s).unwrap();
+        assert!(!err_rt.ok);
+        assert!(err_rt.error.is_some());
+        assert!(err_rt.result.is_none());
+    }
+
+    #[test]
+    fn op_response_rejects_inconsistent() {
+        let json = r#"{"ok":true,"error":{"category":"Unknown","code":0,"message":"x"}}"#;
+        let resp: OpResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.validate().is_err(), "ok=true with error present must fail validate()");
     }
 }

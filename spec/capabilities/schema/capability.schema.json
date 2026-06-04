@@ -46,9 +46,19 @@
           "type": "object",
           "description": "The OpRequest params/target to execute as the write step.",
           "required": ["op"],
+          "additionalProperties": false,
           "properties": {
             "op": { "type": "string" },
-            "params": { "type": "object" }
+            "params": { "type": "object" },
+            "target": {
+              "type": "object",
+              "description": "Optional target location (sheet/range) for the write step.",
+              "properties": {
+                "sheet": { "type": "string" },
+                "range": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
           }
         },
         "reopen": {
