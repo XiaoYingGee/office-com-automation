@@ -128,6 +128,8 @@ impl CapResult {
 fn values_match(got: &serde_json::Value, expect: &serde_json::Value, tol: f64) -> bool {
     use serde_json::Value::*;
     match (got, expect) {
+        // Both null → match
+        (Null, Null) => true,
         (Number(a), Number(b)) => {
             let af = a.as_f64().unwrap_or(f64::NAN);
             let bf = b.as_f64().unwrap_or(f64::NAN);
@@ -198,7 +200,7 @@ fn verify_one(
         op: assert.read.op.clone(),
         path: tmp_str.clone(),
         target: read_target,
-        params: serde_json::Value::Object(Default::default()),
+        params: assert.read.params.clone().unwrap_or(serde_json::Value::Object(Default::default())),
         save_as: None,
     };
 

@@ -60,6 +60,8 @@ pub struct AssertRead {
     pub op: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ActionTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
