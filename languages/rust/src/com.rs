@@ -1,3 +1,8 @@
+// com.rs - safe IDispatch late-binding layer over the windows crate.
+// Some helpers (as_bool, into_dispatch, genuine_empty) round out the wrapper
+// API and are not exercised by the current E01-E12 tasks.
+#![allow(dead_code)]
+
 use std::ptr;
 
 use windows::core::{BSTR, GUID, HRESULT, PCWSTR, Result};
@@ -120,6 +125,33 @@ impl Dispatch {
         Ok(())
     }
 
+    /// Property-put a pre-built raw VARIANT (e.g. a SAFEARRAY for bulk writes).
+    /// Takes ownership of `raw_val` and clears it afterwards to free the array.
+    pub fn put_raw(&self, name: &str, mut raw_val: VARIANT) -> Result<()> {
+        let dispid = self.get_dispid(name)?;
+        let mut named = DISPID_PROPERTYPUT;
+        let mut params = DISPPARAMS {
+            rgvarg: &mut raw_val,
+            rgdispidNamedArgs: &mut named,
+            cArgs: 1,
+            cNamedArgs: 1,
+        };
+        unsafe {
+            self.inner.Invoke(
+                dispid,
+                &GUID::zeroed(),
+                0x0400,
+                DISPATCH_PROPERTYPUT,
+                &mut params,
+                None,
+                None,
+                None,
+            )?;
+            let _ = VariantClear(&mut raw_val);
+        }
+        Ok(())
+    }
+
     pub fn call(&self, name: &str, args: &[Variant]) -> Result<Variant> {
         let dispid = self.get_dispid(name)?;
         let mut raw_args: Vec<VARIANT> = args.iter().rev().map(|a| a.to_raw()).collect();
@@ -197,6 +229,7 @@ impl Dispatch {
 // ---------------------------------------------------------------------------
 pub enum Variant {
     Empty,
+    Missing,
     I4(i32),
     R8(f64),
     Bool(bool),
@@ -209,6 +242,7 @@ impl std::fmt::Debug for Variant {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Variant::Empty => write!(f, "Empty"),
+            Variant::Missing => write!(f, "Missing"),
             Variant::I4(v) => write!(f, "I4({})", v),
             Variant::R8(v) => write!(f, "R8({})", v),
             Variant::Bool(v) => write!(f, "Bool({})", v),
@@ -234,6 +268,12 @@ impl Variant {
             let v00 = &mut *v.Anonymous.Anonymous;
             match self {
                 Variant::Empty => {}
+                Variant::Missing => {
+                    // vtMissing: VT_ERROR carrying DISP_E_PARAMNOTFOUND tells COM the
+                    // optional argument was not supplied (matches C++ _variant_t vtMissing).
+                    v00.vt = VT_ERROR;
+                    v00.Anonymous.scode = -2147352572i32; // DISP_E_PARAMNOTFOUND (0x80020004)
+                }
                 Variant::I4(n) => {
                     v00.vt = VT_I4;
                     v00.Anonymous.lVal = *n;
@@ -266,6 +306,7 @@ impl Variant {
             let vt = v.Anonymous.Anonymous.vt;
             match vt {
                 VT_EMPTY | VT_NULL => Variant::Empty,
+                VT_ERROR => Variant::Missing,
                 VT_I2 => Variant::I4(v.Anonymous.Anonymous.Anonymous.iVal as i32),
                 VT_I4 => Variant::I4(v.Anonymous.Anonymous.Anonymous.lVal),
                 VT_R4 => Variant::R8(v.Anonymous.Anonymous.Anonymous.fltVal as f64),
@@ -293,6 +334,7 @@ impl Variant {
     pub fn type_name(&self) -> &'static str {
         match self {
             Variant::Empty => "Empty",
+            Variant::Missing => "Missing",
             Variant::I4(_) => "I4",
             Variant::R8(_) => "R8",
             Variant::Bool(_) => "Bool",
@@ -337,6 +379,10 @@ impl Variant {
 
 // Convenience constructors
 pub fn empty() -> Variant {
+    // Used throughout the tasks to mean "optional argument omitted" (vtMissing).
+    Variant::Missing
+}
+pub fn genuine_empty() -> Variant {
     Variant::Empty
 }
 pub fn i4(v: i32) -> Variant {
