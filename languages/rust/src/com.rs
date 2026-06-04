@@ -432,6 +432,9 @@ impl SafeArray2D {
         let mut raw = val.to_raw();
         unsafe {
             SafeArrayPutElement(self.psa, indices.as_ptr(), &mut raw as *mut _ as *mut _)?;
+            // SafeArrayPutElement copies the element (VariantCopy internally); we must
+            // VariantClear our local raw to free any heap allocations (e.g. BSTR).
+            let _ = VariantClear(&mut raw);
         }
         Ok(())
     }

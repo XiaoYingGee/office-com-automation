@@ -23,6 +23,9 @@ pub struct Capability {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Verify {
+    /// Optional setup ops run before `action` (e.g. pre-populate the file).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub setup: Vec<Action>,
     pub action: Action,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reopen: Option<bool>,

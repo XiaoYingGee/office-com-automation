@@ -42,6 +42,28 @@
       "required": ["action", "assert"],
       "additionalProperties": false,
       "properties": {
+        "setup": {
+          "type": "array",
+          "description": "Optional pre-condition ops run before verify.action (e.g. write data that the action will operate on).",
+          "items": {
+            "type": "object",
+            "required": ["op"],
+            "additionalProperties": false,
+            "properties": {
+              "op": { "type": "string" },
+              "params": { "type": "object" },
+              "target": {
+                "type": "object",
+                "description": "Optional target location (sheet/range) for the setup op.",
+                "properties": {
+                  "sheet": { "type": "string" },
+                  "range": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
         "action": {
           "type": "object",
           "description": "The OpRequest params/target to execute as the write step.",

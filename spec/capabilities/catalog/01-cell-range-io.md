@@ -167,10 +167,6 @@ Write a 2D array of values to a range in a single COM call via SAFEARRAY.
 
 Clear cell contents from a range via `Range.ClearContents`.
 
-Note: capctl runs ONE action then ONE read. Since the action is `range.clear` on a fresh (empty) cell,
-the assert reads back null (empty). This verifies the op does not error and leaves the cell empty.
-A more meaningful test (write then clear) requires a `setup` step — deferred to a future capctl enhancement.
-
 ```json
 {
   "id": "RANGE-CLEAR-CONTENTS",
@@ -180,6 +176,9 @@ A more meaningful test (write then clear) requires a `setup` step — deferred t
   "param_path": "params.mode=contents",
   "sample": { "target": {"sheet":"Sheet1","range":"F1"}, "params": {"mode":"contents"} },
   "verify": {
+    "setup": [
+      { "op":"cell.write", "target": {"sheet":"Sheet1","range":"F1"}, "params": {"value":"to-clear","kind":"string"} }
+    ],
     "action": { "op":"range.clear", "target": {"sheet":"Sheet1","range":"F1"}, "params": {"mode":"contents"} },
     "reopen": true,
     "assert": { "read": {"op":"range.read","target":{"sheet":"Sheet1","range":"F1"}}, "expect": null }
@@ -194,10 +193,6 @@ A more meaningful test (write then clear) requires a `setup` step — deferred t
 
 Copy the value from one cell to another via a read+write cycle (no clipboard).
 
-Note: capctl runs ONE action then ONE read. With a fresh file H1 is empty, so copy_values copies empty→H2,
-and the read of H2 returns null/empty. This verifies the op path without error.
-A more meaningful test (write to source first) requires a `setup` step — deferred to a future capctl enhancement.
-
 ```json
 {
   "id": "RANGE-COPY-VALUES",
@@ -207,9 +202,12 @@ A more meaningful test (write to source first) requires a `setup` step — defer
   "param_path": "params.dest (destination address)",
   "sample": { "target": {"sheet":"Sheet1","range":"H1"}, "params": {"dest":"H2"} },
   "verify": {
+    "setup": [
+      { "op":"cell.write", "target": {"sheet":"Sheet1","range":"H1"}, "params": {"value":7,"kind":"number"} }
+    ],
     "action": { "op":"range.copy_values", "target": {"sheet":"Sheet1","range":"H1"}, "params": {"dest":"H2"} },
     "reopen": true,
-    "assert": { "read": {"op":"range.read","target":{"sheet":"Sheet1","range":"H2"}}, "expect": null }
+    "assert": { "read": {"op":"range.read","target":{"sheet":"Sheet1","range":"H2"}}, "expect": 7, "tol": 0.001 }
   },
   "errors": [],
   "com_ref": "Range.Value2",

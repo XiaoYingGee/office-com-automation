@@ -155,6 +155,42 @@ fn verify_one(
     let _ = std::fs::remove_file(&tmp_path);
     let tmp_str = tmp_path.to_string_lossy().replace('\\', "/");
 
+    // ── Setup phase: run each setup op in order before the main action ──────
+    for (idx, setup_op) in cap.verify.setup.iter().enumerate() {
+        let setup_target = setup_op.target.as_ref().map(|t| Target {
+            sheet: t.sheet.clone(),
+            range: t.range.clone(),
+        });
+        let setup_req = OpRequest {
+            op: setup_op.op.clone(),
+            path: tmp_str.clone(),
+            target: setup_target,
+            params: setup_op.params.clone().unwrap_or(serde_json::Value::Object(Default::default())),
+            save_as: Some(SaveAs {
+                path: tmp_str.clone(),
+                format: "xlsx".into(),
+            }),
+        };
+        let setup_resp = match run_op(backend_cmd, &setup_req) {
+            Ok(r) => r,
+            Err(e) => {
+                return CapResult::BackendFail {
+                    category: format!("setup[{idx}] spawn-error: {e}"),
+                };
+            }
+        };
+        if !setup_resp.ok {
+            let cat = setup_resp
+                .error
+                .as_ref()
+                .map(|e| format!("{:?}", e.category))
+                .unwrap_or_else(|| "Unknown".into());
+            return CapResult::BackendFail {
+                category: format!("setup[{idx}] failed: {cat}"),
+            };
+        }
+    }
+
     // Build write request
     let action = &cap.verify.action;
     let write_target = action.target.as_ref().map(|t| Target {

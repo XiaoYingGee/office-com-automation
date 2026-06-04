@@ -75,6 +75,30 @@ fn win_path(path: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// save_and_close — shared helper used by all mutating ops
+// ---------------------------------------------------------------------------
+/// Save (optionally as a new path/format) then close the workbook.
+/// If `req.save_as` is set, uses that path/format; otherwise derives the
+/// format from `req.path`'s extension, falling back to xlsx (51).
+fn save_and_close(wb: &crate::com::Dispatch, req: &OpRequest) -> Result<(), ExcelError> {
+    if let Some(save_as) = &req.save_as {
+        let fmt = format_code(&save_as.format)?;
+        let save_path = win_path(&save_as.path);
+        wb.call("SaveAs", &[bstr(&save_path), i4(fmt)]).map_err(|e| map_com_error(&e))?;
+    } else {
+        let ext = std::path::Path::new(&req.path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        let fmt = format_code(ext).unwrap_or(51);
+        let save_path = win_path(&req.path);
+        wb.call("SaveAs", &[bstr(&save_path), i4(fmt)]).map_err(|e| map_com_error(&e))?;
+    }
+    wb.call("Close", &[vbool(false)]).map_err(|e| map_com_error(&e))?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // cell.write
 // ---------------------------------------------------------------------------
 fn cell_write(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
@@ -129,23 +153,7 @@ fn cell_write(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
         }
     }
 
-    // Save
-    if let Some(save_as) = &req.save_as {
-        let fmt = format_code(&save_as.format)?;
-        let save_path = win_path(&save_as.path);
-        wb.call("SaveAs", &[bstr(&save_path), i4(fmt)]).map_err(|e| map_com_error(&e))?;
-    } else {
-        // Derive format from req.path extension; default to xlsx (51) if unknown.
-        let ext = std::path::Path::new(&req.path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-        let fmt = format_code(ext).unwrap_or(51);
-        let save_path = win_path(&req.path);
-        wb.call("SaveAs", &[bstr(&save_path), i4(fmt)]).map_err(|e| map_com_error(&e))?;
-    }
-
-    wb.call("Close", &[vbool(false)]).map_err(|e| map_com_error(&e))?;
+    save_and_close(&wb, &req)?;
 
     Ok(json!({"written": true}))
 }
@@ -188,7 +196,8 @@ fn range_read(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
             match val {
                 Variant::Bstr(s) => json!({"kind": "string", "value": s}),
                 Variant::Empty | Variant::Missing => json!({"kind": "empty", "value": null}),
-                _ => json!({"kind": "string", "value": null}),
+                // Non-string (numeric cell has no formula) — route through variant_to_json
+                other => variant_to_json(other),
             }
         }
         "text" => {
@@ -196,7 +205,8 @@ fn range_read(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
             match val {
                 Variant::Bstr(s) => json!({"kind": "string", "value": s}),
                 Variant::Empty | Variant::Missing => json!({"kind": "empty", "value": null}),
-                _ => json!({"kind": "string", "value": null}),
+                // Non-string variant — route through variant_to_json
+                other => variant_to_json(other),
             }
         }
         other => {
@@ -255,11 +265,22 @@ fn range_write_bulk(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
         return Err(excel_err(ErrorCategory::InvalidArg, "params.values rows must not be empty"));
     }
 
+    // Validate that EVERY row has exactly `cols` elements (ragged-array guard)
+    for (ri, row) in values.iter().enumerate() {
+        let row_arr = row.as_array()
+            .ok_or_else(|| excel_err(ErrorCategory::InvalidArg,
+                format!("row {ri} in params.values is not an array")))?;
+        if row_arr.len() as i32 != cols {
+            return Err(excel_err(ErrorCategory::InvalidArg,
+                format!("row {ri} has {} elements but row 0 has {cols}; all rows must have the same length",
+                    row_arr.len())));
+        }
+    }
+
     // Build SafeArray2D
     let mut sa = SafeArray2D::new(rows, cols).map_err(|e| map_com_error(&e))?;
     for (ri, row) in values.iter().enumerate() {
-        let row_arr = row.as_array()
-            .ok_or_else(|| excel_err(ErrorCategory::InvalidArg, "each row in params.values must be an array"))?;
+        let row_arr = row.as_array().unwrap(); // already validated above
         for (ci, cell_val) in row_arr.iter().enumerate() {
             let variant = json_scalar_to_variant(cell_val)?;
             sa.put((ri + 1) as i32, (ci + 1) as i32, variant)
@@ -276,22 +297,7 @@ fn range_write_bulk(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
     let rng = excel.get_range(&ws, range_addr).map_err(|e| map_com_error(&e))?;
     rng.put_raw("Value2", sa_variant).map_err(|e| map_com_error(&e))?;
 
-    // Save
-    if let Some(save_as) = &req.save_as {
-        let fmt = format_code(&save_as.format)?;
-        let save_path = win_path(&save_as.path);
-        wb.call("SaveAs", &[bstr(&save_path), i4(fmt)]).map_err(|e| map_com_error(&e))?;
-    } else {
-        let ext = std::path::Path::new(&req.path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-        let fmt = format_code(ext).unwrap_or(51);
-        let save_path = win_path(&req.path);
-        wb.call("SaveAs", &[bstr(&save_path), i4(fmt)]).map_err(|e| map_com_error(&e))?;
-    }
-
-    wb.call("Close", &[vbool(false)]).map_err(|e| map_com_error(&e))?;
+    save_and_close(&wb, &req)?;
 
     Ok(json!({"written": true, "rows": rows, "cols": cols}))
 }
@@ -324,10 +330,14 @@ fn range_clear(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
         .unwrap_or("contents")
         .to_string();
 
-    // File must exist for clear to make sense; open_or_create to handle fresh files too
+    // File must exist (setup phase ensures it does)
+    if !std::path::Path::new(&req.path).exists() {
+        return Err(excel_err(ErrorCategory::FileNotFound, format!("file not found: {}", req.path)));
+    }
+
     let excel = ExcelApp::new().map_err(|e| map_com_error(&e))?;
     let native_path = win_path(&req.path);
-    let wb = excel.open_or_create(&native_path).map_err(|e| map_com_error(&e))?;
+    let wb = excel.open_workbook(&native_path).map_err(|e| map_com_error(&e))?;
 
     let ws = resolve_sheet_write(&excel, &wb, &sheet_name)?;
     let rng = excel.get_range(&ws, range_addr).map_err(|e| map_com_error(&e))?;
@@ -346,22 +356,7 @@ fn range_clear(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
         }
     }
 
-    // Save
-    if let Some(save_as) = &req.save_as {
-        let fmt = format_code(&save_as.format)?;
-        let save_path = win_path(&save_as.path);
-        wb.call("SaveAs", &[bstr(&save_path), i4(fmt)]).map_err(|e| map_com_error(&e))?;
-    } else {
-        let ext = std::path::Path::new(&req.path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-        let fmt = format_code(ext).unwrap_or(51);
-        let save_path = win_path(&req.path);
-        wb.call("SaveAs", &[bstr(&save_path), i4(fmt)]).map_err(|e| map_com_error(&e))?;
-    }
-
-    wb.call("Close", &[vbool(false)]).map_err(|e| map_com_error(&e))?;
+    save_and_close(&wb, &req)?;
 
     Ok(json!({"cleared": true}))
 }
@@ -381,9 +376,14 @@ fn range_copy_values(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
 
     let sheet_name = req.target.as_ref().and_then(|t| t.sheet.clone());
 
+    // File must exist (setup phase ensures it does)
+    if !std::path::Path::new(&req.path).exists() {
+        return Err(excel_err(ErrorCategory::FileNotFound, format!("file not found: {}", req.path)));
+    }
+
     let excel = ExcelApp::new().map_err(|e| map_com_error(&e))?;
     let native_path = win_path(&req.path);
-    let wb = excel.open_or_create(&native_path).map_err(|e| map_com_error(&e))?;
+    let wb = excel.open_workbook(&native_path).map_err(|e| map_com_error(&e))?;
 
     let ws = resolve_sheet_write(&excel, &wb, &sheet_name)?;
 
@@ -407,22 +407,7 @@ fn range_copy_values(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
         }
     }
 
-    // Save
-    if let Some(save_as) = &req.save_as {
-        let fmt = format_code(&save_as.format)?;
-        let save_path = win_path(&save_as.path);
-        wb.call("SaveAs", &[bstr(&save_path), i4(fmt)]).map_err(|e| map_com_error(&e))?;
-    } else {
-        let ext = std::path::Path::new(&req.path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-        let fmt = format_code(ext).unwrap_or(51);
-        let save_path = win_path(&req.path);
-        wb.call("SaveAs", &[bstr(&save_path), i4(fmt)]).map_err(|e| map_com_error(&e))?;
-    }
-
-    wb.call("Close", &[vbool(false)]).map_err(|e| map_com_error(&e))?;
+    save_and_close(&wb, &req)?;
 
     Ok(json!({"copied": true}))
 }
