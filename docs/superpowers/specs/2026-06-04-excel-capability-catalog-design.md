@@ -2,7 +2,7 @@
 
 > Date: 2026-06-04
 > Status: Approved (brainstorming)
-> Topic: 语言无关的 Excel 能力目录 (capability catalog) + 统一操作契约，作为三语言 (VBA/C++/Rust) 共同实现与横向 PK 的底座。
+> Topic: 语言无关的 Excel 能力目录 (capability catalog) + 统一操作契约，作为 4 个方案 (VBA/C++/Rust/OpenXML) 共同实现与横向 PK 的底座。
 
 ## 1. 背景与目标
 
@@ -24,8 +24,9 @@
 | 错误模型 | 结构化 `{ category, code, message, hint }` |
 | 覆盖广度 v1 | 核心 8 域做深；冷门特性缓后 |
 | 能力表粒度 | **细**：拆到单属性，目标 ~120 项（80–150） |
-| 支持度判定 | **自动验证**：每项带验证配方（写→存→重开→断言） |
-| 语言范围 | 共享契约 + 三语言分批实现（Rust 参考先行 → C++ → VBA） |
+| 支持度判定 | **自动验证**：每项带验证配方（写→存→**用统一参考读取器重开**→断言） |
+| 实现方案 | **4 个方案**：VBA / C++ / Rust（均走 COM）+ **OpenXML**（.NET Open XML SDK，文件级、不起 Excel）。Office.js 暂不进（runtime 不契合 headless，记 roadmap）。 |
+| 批的单位 | **能力条目**（非语言）：每新增一条能力，**立即在全部 4 方案实现 + 各自验证 + 回填一行**。前置一次性"基础设施批"先把契约与各方案骨架/验证 harness 立起来。 |
 
 ## 3. 交付物与文件布局
 
@@ -64,7 +65,7 @@ spec/capabilities/
 | `verify` | 自动验证配方（见 §6） |
 | `errors` | 该能力的非法入参 → 期望错误 category |
 | `com_ref` | 底层 Excel 对象/属性，如 `Range.Font.Bold`（给三语言对齐） |
-| `support` | VBA/C++/Rust 三列，实现后回填 ✅/⚠️/❌/⬜ |
+| `support` | VBA/C++/Rust/OpenXML 四列，实现后回填 ✅/⚠️/❌/⬜ |
 
 **域与大致条目数（合计 ~120）：**
 
@@ -86,7 +87,7 @@ sample: { target: "Sheet1!A1", font: { color: "#FF0000" } }
 verify: write sample → save → reopen → read range.format.font.color == "#FF0000"
 errors: color="zzz" → InvalidArg ; target="A1:" → RangeParseError
 com_ref: Range.Font.Color (BGR long)
-support: { vba: ⬜, cpp: ⬜, rust: ⬜ }
+support: { vba: ⬜, cpp: ⬜, rust: ⬜, openxml: ⬜ }
 ```
 
 ## 5. 统一契约 (contract.md)
@@ -110,30 +111,35 @@ support: { vba: ⬜, cpp: ⬜, rust: ⬜ }
 - ⚠️ 部分：能写入但重开丢失/有损/需 workaround（脚注说明）。
 - ❌ 不支持：op 报错或结果错。
 
+**统一参考读取器**：断言阶段的"重开读回"由**单一参考读取器（Excel COM）**完成——无论文件是哪个方案写的，都用同一把尺量。这样跨方案的判定口径一致；OpenXML 写出的 `.xlsx` 也用 COM 重开验证。各方案只负责"写"，"读回断言"统一。
+
 `errors` 字段 → 失败路径验证，覆盖"边界/失败用例"目标。
 
-## 7. 逐语言支持矩阵 (support-matrix.md)
+## 7. 逐方案支持矩阵 (support-matrix.md)
 
-行=能力 id，列=VBA/C++/Rust，值=✅/⚠️/❌/⬜ + 脚注原因。
+行=能力 id，列=**VBA / C++ / Rust / OpenXML**，值=✅/⚠️/❌/⬜ + 脚注原因。
 覆盖率 = (✅记1 + ⚠️记0.5) / 总数 → PK D1（功能覆盖度）得分。
+OpenXML 因不起 Excel 引擎，预期在公式重算/图表渲染/PDF/宏等域大面积 ❌——这是高信息量的对比数据，体现"零 Office 依赖"的代价。
 
-## 8. 分批实现安排（批的单位 = 语言）
+## 8. 分批实现安排（批的单位 = 能力条目）
 
-- **批 0 — 能力表 + 契约**：产出 §3 全部 spec 内容（catalog 8 域 ~120 条、contract.md、schema/、support-matrix 模板）。这是发给三语言的"包"。
-- **批 1 — Rust 参考实现**：按契约实现 op dispatcher（无状态、`OpRequest→OpResponse`）+ 全部能力 + 每项自动验证；跑出 Rust 支持列。作为参考实现校验"表是否真可实现"。
-- **批 2 — C++ 实现**：同契约实现，回填 C++ 列。
-- **批 3 — VBA 实现**：同契约实现，回填 VBA 列。
+- **基础设施批（前置一次性）**：契约 + schema + 校验器 + **统一参考读取器** + 4 方案各自的 op 骨架/验证 harness（Rust 已就绪先立，C++ 用现有 `vcvarsall+cl` 模式，OpenXML 新建 .NET 工程，VBA 走脚本宿主）。立完即可跑通"一条能力 → 4 方案实现 → 各自验证 → 回填一行"的端到端闭环。
+- **能力滚动批（逐条目纵切）**：之后按域顺序逐条新增能力——每条**立即在 4 方案实现 + 各自自动验证 + 回填支持矩阵一行 + 提交**。不再按语言分批。
+  - 顺序建议：① 单格/区域 I/O → ② 格式化 → ③ 结构 → ④ 公式 → ⑤ 表/簿 → ⑥ 数据 → ⑦ 图表 → ⑧ IO/导出。
+  - 每条目以"4 方案各自验证可复现 + 矩阵该行填满（含 ❌ 脚注）"为完成口径。
 
-每批以"该语言支持矩阵列填满 + 自动验证可复现"为完成口径。各批独立，互不阻塞契约。
+> 写作计划拆分：基础设施批 = 第一份计划；能力滚动批按域切成后续若干份计划（每份一个域，逐条目跨 4 方案）。
 
 ## 9. 明确不做（YAGNI · v1）
 
 - 冷门特性缓后：透视表、条件格式、数据验证(列表以外)、图片/形状、迷你图、切片器、批注、超链接、主题/单元格样式。
+- **Office.js 不进本期**：其 runtime（云端 Office Scripts / 加载项宿主）不契合 headless COM/Wine 流水线，自动验证需另起一套 runner；记 roadmap 远期。
 - 不做有状态 session、不做 MCP server（后续子项目；契约已留接缝）。
 - Wine 运行时、四维跑分（走原 roadmap P2/P3，与本设计正交）。
 
 ## 10. 与现有结构的衔接
 
+- 仓库框架小改：从"多语言 **COM** 比武"拓宽为"多**方案** Excel 自动化比武"（COM 引擎 vs OpenXML 文件级）。README/docs 相应措辞微调。
 - `spec/capability-matrix.md`（12 任务粗矩阵）→ 加指针指向 `spec/capabilities/support-matrix.md`。
 - `docs/pk-framework.md` D1 计分来源切换/补充为细粒度矩阵覆盖率。
-- 不动 `languages/*/src` 现有 `E01–E12` 实现；新增能力实现各语言新开模块/入口。
+- 不动 `languages/*/src` 现有 `E01–E12` 实现；新增能力实现各方案新开模块/入口（新增 `languages/openxml/`）。
