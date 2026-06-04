@@ -15,6 +15,10 @@
 # ---- .NET / C# ----
 bin/
 obj/
+# Rust binary *sources* live here and must be tracked (the bin/ rule above is for .NET build output)
+!languages/rust/src/bin/
+!languages/rust/src/bin/**
+obj/
 *.user
 *.suo
 .vs/

@@ -1,5 +1,9 @@
 use std::process::Command;
 
+fn row<'a>(m: &'a str, id: &str) -> &'a str {
+    m.lines().find(|l| l.contains(id)).unwrap_or("")
+}
+
 #[test]
 fn capctl_fills_rust_column_for_cell_io() {
     let backend = env!("CARGO_BIN_EXE_excel-ops");
@@ -12,8 +16,12 @@ fn capctl_fills_rust_column_for_cell_io() {
         .status().unwrap();
     assert!(status.success(), "capctl exited non-zero");
     let m = std::fs::read_to_string(&out).unwrap();
-    // The three cell-write capabilities should be ✅ in the Rust column.
+    // The three cell-write capabilities should be present in the matrix.
     assert!(m.contains("CELL-WRITE-STRING"), "matrix missing rows:\n{m}");
-    // crude check: the Rust column for the string row is ✅ (no ❌/⚠️ in cell-write rows)
-    assert!(!m.contains("❌"), "unexpected failures in matrix:\n{m}");
+    // Per-row checks: each cell-write capability must be ✅ in the Rust column.
+    for id in ["CELL-WRITE-STRING", "CELL-WRITE-NUMBER", "CELL-WRITE-BOOL"] {
+        let r = row(&m, id);
+        assert!(r.contains("✅"), "{id} not ✅: {r}");
+        assert!(!r.contains("❌") && !r.contains("⚠️"), "{id} regressed: {r}");
+    }
 }

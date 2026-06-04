@@ -73,8 +73,19 @@
           "additionalProperties": false,
           "properties": {
             "read": {
-              "type": "string",
-              "description": "Op to execute for reading back the value."
+              "type": "object",
+              "description": "Op and optional target to execute for reading back the value.",
+              "required": ["op"],
+              "properties": {
+                "op": { "type": "string" },
+                "target": {
+                  "type": "object",
+                  "properties": {
+                    "sheet": { "type": "string" },
+                    "range": { "type": "string" }
+                  }
+                }
+              }
             },
             "expect": {
               "description": "Expected value (any JSON scalar or object)."
