@@ -3,6 +3,10 @@ name = "excel-com"
 version = "0.1.0"
 edition = "2021"
 
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
 [dependencies.windows]
 version = "0.61"
 features = [
@@ -13,3 +17,19 @@ features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_Threading",
 ]
+
+[lib]
+name = "excel_com"
+path = "src/lib.rs"
+
+[[bin]]
+name = "excel-com"
+path = "src/main.rs"
+
+[[bin]]
+name = "excel-ops"
+path = "src/bin/excel-ops.rs"
+
+[[bin]]
+name = "capctl"
+path = "src/bin/capctl.rs"

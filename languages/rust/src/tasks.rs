@@ -7,8 +7,8 @@ use std::path::Path;
 
 use windows::core::Result;
 
-use crate::com::{bstr, empty, i4, r8, vbool, SafeArray2D, Variant};
-use crate::excel::ExcelApp;
+use excel_com::com::{bstr, empty, i4, r8, vbool, SafeArray2D, Variant};
+use excel_com::excel::ExcelApp;
 
 // ---------------------------------------------------------------------------
 // Small filesystem helpers

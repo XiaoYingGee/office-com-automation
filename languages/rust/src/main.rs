@@ -4,9 +4,9 @@
 //   No args  = run all tasks.
 //   Specify task names (case-insensitive) to run a subset.
 
-mod com;
-mod excel;
 mod tasks;
+
+use excel_com::com;
 
 use std::env;
 use std::path::PathBuf;
