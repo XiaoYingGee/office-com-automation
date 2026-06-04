@@ -4,12 +4,12 @@
 
 | id | VBA | C++ | Rust | OpenXML |
 |---|:---:|:---:|:---:|:---:|
-| CELL-WRITE-STRING | ⬜ | ⬜ | ✅ | ⬜ |
-| CELL-WRITE-NUMBER | ⬜ | ⬜ | ✅ | ⬜ |
-| CELL-WRITE-BOOL | ⬜ | ⬜ | ✅ | ⬜ |
-| CELL-WRITE-FORMULA | ⬜ | ⬜ | ✅ | ⬜ |
-| CELL-READ-FORMULA | ⬜ | ⬜ | ✅ | ⬜ |
-| CELL-READ-TEXT | ⬜ | ⬜ | ✅ | ⬜ |
-| RANGE-WRITE-BULK | ⬜ | ⬜ | ✅ | ⬜ |
-| RANGE-CLEAR-CONTENTS | ⬜ | ⬜ | ✅ | ⬜ |
-| RANGE-COPY-VALUES | ⬜ | ⬜ | ✅ | ⬜ |
+| CELL-WRITE-STRING | ⬜ | ⬜ | ✅ | ✅ |
+| CELL-WRITE-NUMBER | ⬜ | ⬜ | ✅ | ✅ |
+| CELL-WRITE-BOOL | ⬜ | ⬜ | ✅ | ✅ |
+| CELL-WRITE-FORMULA | ⬜ | ⬜ | ✅ | ✅ |
+| CELL-READ-FORMULA | ⬜ | ⬜ | ✅ | ✅ |
+| CELL-READ-TEXT | ⬜ | ⬜ | ✅ | ✅ |
+| RANGE-WRITE-BULK | ⬜ | ⬜ | ✅ | ✅ |
+| RANGE-CLEAR-CONTENTS | ⬜ | ⬜ | ✅ | ✅ |
+| RANGE-COPY-VALUES | ⬜ | ⬜ | ✅ | ✅ |
