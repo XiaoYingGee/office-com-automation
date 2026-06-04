@@ -48,3 +48,18 @@ fn write_number_roundtrips() {
     let rr = run_op(&r);
     assert!(rr.contains("42.5"), "read resp: {rr}");
 }
+
+#[test]
+fn write_csv_uses_csv_format() {
+    let dir = std::env::temp_dir().join("capfound");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("out.csv");
+    let _ = std::fs::remove_file(&path);
+    let p = path.to_string_lossy().replace('\\', "/");
+    let w = format!(
+        r#"{{"op":"cell.write","path":"{p}","target":{{"range":"A1"}},"params":{{"value":"hello","kind":"string"}}}}"#
+    );
+    let wr = run_op(&w);
+    assert!(wr.contains("\"ok\":true"), "write resp: {wr}");
+    assert!(path.exists(), "csv file should exist at {}", path.display());
+}

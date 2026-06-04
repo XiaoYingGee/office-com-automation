@@ -50,7 +50,7 @@ fn resolve_sheet_write(excel: &ExcelApp, wb: &crate::com::Dispatch, sheet: &Opti
             excel.get_sheet_by_name(wb, name).or_else(|_| {
                 // Fall back to first sheet (handles non-English Excel default names)
                 excel.get_sheet(wb, 1).map_err(|e| map_com_error(&e))
-            }).map_err(|e| e)
+            })
         }
         None => excel.get_sheet(wb, 1).map_err(|e| map_com_error(&e)),
     }
@@ -135,9 +135,14 @@ fn cell_write(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
         let save_path = win_path(&save_as.path);
         wb.call("SaveAs", &[bstr(&save_path), i4(fmt)]).map_err(|e| map_com_error(&e))?;
     } else {
-        // Save to req.path as xlsx
+        // Derive format from req.path extension; default to xlsx (51) if unknown.
+        let ext = std::path::Path::new(&req.path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        let fmt = format_code(ext).unwrap_or(51);
         let save_path = win_path(&req.path);
-        wb.call("SaveAs", &[bstr(&save_path), i4(51)]).map_err(|e| map_com_error(&e))?;
+        wb.call("SaveAs", &[bstr(&save_path), i4(fmt)]).map_err(|e| map_com_error(&e))?;
     }
 
     wb.call("Close", &[vbool(false)]).map_err(|e| map_com_error(&e))?;
