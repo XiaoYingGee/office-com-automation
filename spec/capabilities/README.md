@@ -50,6 +50,12 @@ More domain files will be added under `catalog/` as new capability domains are s
 | ❌     | Unsupported / errored — backend returned an error, or reference read failed |
 | ⬜     | Untested — `capctl verify` has not been run for this backend/capability |
 
+> **Authority note:** the `support` field inside each catalog entry is the initial/default state
+> (⬜); `support-matrix.md` is the authoritative, capctl-generated record of actual test results
+> and must not be edited by hand.  Note also that `CELL-READ-TEXT` is locale-sensitive — it may
+> show ⚠️ on non-English Excel installations where the display format differs from the expected
+> value.
+
 ---
 
 ## Running `capctl verify`

@@ -279,6 +279,17 @@ The reference reader is always the Rust `excel-ops` binary, so all backends are 
 consistent reader. An approach that cannot perform an op should return an `OpResponse` error;
 capctl records that as ❌, which is still meaningful comparison data.
 
+> **Single-reference-reader caveat:** the reference reader is the same Rust `excel-ops` binary
+> used to build the backend under test when `--backend rust` is run.  A systematic bug shared
+> by both the Rust writer and the Rust reader would appear as a false ✅ — the round-trip
+> succeeds but the on-disk value is wrong.  Independent ground-truth validation (e.g. opening
+> the generated `.xlsx` in a separate tool) is future work and not currently automated.
+
+> **`range.copy_values` same-sheet only:** `params.dest` must be a bare A1 address on the
+> *source* sheet (`target.sheet`).  Cross-sheet copy is not supported — to copy a value to a
+> different sheet, use two ops: a `range.read` on the source, then a `cell.write` on the
+> destination sheet.
+
 **Matrix symbols:**
 
 | Symbol | Meaning |

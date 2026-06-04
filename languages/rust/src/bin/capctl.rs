@@ -280,12 +280,56 @@ fn verify_one(
 
 // ── Matrix generation ────────────────────────────────────────────────────────
 
-// TODO: multi-backend aggregation — currently regenerates from scratch filling only --backend's column; a future step should MERGE per-backend runs into one matrix.
+/// Parse an existing matrix markdown file and return a map of (capability_id, col_key) → symbol.
+/// col_key is one of "vba", "cpp", "rust", "openxml" (lowercase).
+/// Only rows whose first `|`-delimited cell matches a known capability id are parsed; header/
+/// separator lines are skipped.  Returns an empty map if the file is absent or unparseable.
+fn parse_existing_matrix(path: &Path) -> std::collections::HashMap<(String, String), String> {
+    let mut map = std::collections::HashMap::new();
+    let content = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(_) => return map, // file absent — nothing to merge
+    };
+    // The header row looks like:  | id | VBA | C++ | Rust | OpenXML |
+    // Col order is fixed; we rely on that rather than re-parsing headers.
+    let col_keys = ["vba", "cpp", "rust", "openxml"];
+    for line in content.lines() {
+        let line = line.trim();
+        if !line.starts_with('|') { continue; }
+        let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+        // cells[0] == "" (before first |), cells[1] == id, cells[2..5] == col values, cells[6+] ignored
+        // Skip header/separator rows: id cell contains "id" or "---" or is empty
+        if cells.len() < 6 { continue; }
+        let id_cell = cells[1];
+        if id_cell.is_empty() || id_cell == "id" || id_cell.starts_with("---") { continue; }
+        // Looks like a data row — parse the 4 backend columns (cells[2..=5])
+        for (i, col_key) in col_keys.iter().enumerate() {
+            if let Some(cell) = cells.get(i + 2) {
+                let sym = cell.trim().to_string();
+                if !sym.is_empty() {
+                    map.insert((id_cell.to_string(), col_key.to_string()), sym);
+                }
+            }
+        }
+    }
+    map
+}
+
+/// Generate (or merge-update) the capability support matrix markdown.
+///
+/// Merge semantics: if `out_path` already exists and contains a parseable table, the values for
+/// all non-`backend_col` columns are PRESERVED from the existing file.  Only the column for
+/// `backend_col` is replaced with fresh `results`.  This prevents a second backend run from
+/// wiping a previously-committed column.
 fn generate_matrix(
     caps: &[Capability],
     results: &[(String, CapResult)], // (id, result) for the run backend
     backend_col: &str,
+    out_path: &Path,
 ) -> String {
+    // Read existing matrix cells for merging
+    let existing = parse_existing_matrix(out_path);
+
     // Map id -> result symbol for quick lookup
     let result_map: std::collections::HashMap<&str, &CapResult> = results
         .iter()
@@ -294,7 +338,6 @@ fn generate_matrix(
 
     // Column order: vba, cpp, rust, openxml
     let cols = ["vba", "cpp", "rust", "openxml"];
-    let col_headers = ["VBA", "C++", "Rust", "OpenXML"];
     let backend_lower = backend_col.to_ascii_lowercase();
 
     let mut out = String::new();
@@ -305,33 +348,60 @@ fn generate_matrix(
 
     for cap in caps {
         out.push_str(&format!("| {} ", cap.id));
-        for (col_key, _col_hdr) in cols.iter().zip(col_headers.iter()) {
+        for col_key in &cols {
             if *col_key == backend_lower {
+                // Use fresh result from this run
                 let sym = result_map
                     .get(cap.id.as_str())
                     .map(|r| r.symbol())
                     .unwrap_or("⬜");
                 out.push_str(&format!("| {sym} "));
             } else {
-                // Keep existing support value from catalog as-is (all ⬜ for now)
-                let existing = match *col_key {
-                    "vba" => cap.support.vba.as_str(),
-                    "cpp" => cap.support.cpp.as_str(),
-                    "rust" => cap.support.rust.as_str(),
-                    "openxml" => cap.support.openxml.as_str(),
-                    _ => "⬜",
-                };
-                out.push_str(&format!("| {existing} "));
+                // MERGE: prefer existing matrix value; fall back to catalog support field
+                let sym = existing
+                    .get(&(cap.id.clone(), col_key.to_string()))
+                    .map(String::as_str)
+                    .unwrap_or_else(|| match *col_key {
+                        "vba" => cap.support.vba.as_str(),
+                        "cpp" => cap.support.cpp.as_str(),
+                        "rust" => cap.support.rust.as_str(),
+                        "openxml" => cap.support.openxml.as_str(),
+                        _ => "⬜",
+                    });
+                out.push_str(&format!("| {sym} "));
             }
         }
         out.push_str("|\n");
     }
 
-    // Footnotes
-    let footnotes: Vec<String> = results
+    // Footnotes: emit fresh notes for the run backend; preserve notes from other backends by
+    // re-extracting them from the existing file's ## Notes section.
+    let mut footnotes: Vec<String> = results
         .iter()
         .filter_map(|(id, r)| r.footnote(id))
         .collect();
+
+    // Preserve footnotes for other backends from the existing file.
+    // We identify "other backend footnotes" as lines that do NOT start with the run-backend ids.
+    let run_ids: Vec<&str> = results.iter().map(|(id, _)| id.as_str()).collect();
+    if let Ok(existing_content) = std::fs::read_to_string(out_path) {
+        let mut in_notes = false;
+        for line in existing_content.lines() {
+            if line.trim_start().starts_with("## Notes") { in_notes = true; continue; }
+            if in_notes {
+                if line.trim_start().starts_with('#') { break; } // next section
+                let trimmed = line.trim();
+                if trimmed.starts_with("- **") {
+                    // Check if this note belongs to the run backend (id in run_ids)
+                    let belongs_to_run = run_ids.iter().any(|id| trimmed.contains(&format!("**{id}**")));
+                    if !belongs_to_run {
+                        footnotes.push(trimmed.trim_start_matches("- ").to_string());
+                    }
+                }
+            }
+        }
+    }
+
     if !footnotes.is_empty() {
         out.push_str("\n## Notes\n\n");
         for note in &footnotes {
@@ -381,8 +451,8 @@ fn main() {
         results.push((cap.id.clone(), result));
     }
 
-    // Generate matrix markdown
-    let matrix = generate_matrix(&caps, &results, &args.backend);
+    // Generate matrix markdown (merges with existing file to preserve other backend columns)
+    let matrix = generate_matrix(&caps, &results, &args.backend, &args.out);
 
     // Write output
     if let Some(parent) = args.out.parent() {

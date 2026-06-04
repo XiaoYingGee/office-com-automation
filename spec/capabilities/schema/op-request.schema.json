@@ -38,7 +38,7 @@
         "path": { "type": "string" },
         "format": {
           "type": "string",
-          "enum": ["xlsx", "xlsm", "xls", "csv", "pdf"],
+          "enum": ["xlsx", "xlsm", "xls", "csv"],
           "description": "Output format."
         }
       }
