@@ -1,0 +1,40 @@
+@echo off
+REM build.bat - Build Excel COM automation C++ project
+REM Uses MSVC cl.exe with #import for Excel type library
+
+setlocal
+
+REM Setup MSVC environment
+call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" x64
+
+REM Navigate to source directory
+cd /d "%~dp0"
+
+REM Create output directory
+if not exist out mkdir out
+
+REM Clean cached type library headers to force regeneration
+del /Q *.tlh *.tli *.obj 2>NUL
+
+echo.
+echo === Building Excel COM Automation (C++) ===
+echo.
+
+cl.exe /nologo /EHsc /std:c++17 /W3 /O2 ^
+    /DWIN32 /D_UNICODE /DUNICODE ^
+    /Fe:excel_com.exe ^
+    main.cpp tasks.cpp excel_com.cpp ^
+    /link ole32.lib oleaut32.lib uuid.lib
+
+if %ERRORLEVEL% NEQ 0 (
+    echo.
+    echo === BUILD FAILED ===
+    exit /b 1
+)
+
+echo.
+echo === BUILD SUCCEEDED ===
+echo Output: %~dp0excel_com.exe
+echo.
+echo Usage: excel_com.exe [E01] [E02] ... [E12]
+echo   No args = run all tasks

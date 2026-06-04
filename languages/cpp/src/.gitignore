@@ -1,0 +1,14 @@
+# Build artifacts
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.lib
+*.exp
+
+# Generated type library headers
+*.tlh
+*.tli
+
+# Output directory
+out/
