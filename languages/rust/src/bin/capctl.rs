@@ -45,8 +45,18 @@ fn parse_args() -> Result<Args, String> {
         }
     }
 
+    let backend = backend.ok_or("--backend required")?;
+    let backend_lower = backend.to_ascii_lowercase();
+    const VALID_BACKENDS: &[&str] = &["vba", "cpp", "rust", "openxml"];
+    if !VALID_BACKENDS.contains(&backend_lower.as_str()) {
+        return Err(format!(
+            "unknown --backend {:?}; expected one of: {}",
+            backend,
+            VALID_BACKENDS.join(", ")
+        ));
+    }
     Ok(Args {
-        backend: backend.ok_or("--backend required")?,
+        backend,
         backend_cmd: backend_cmd.ok_or("--backend-cmd required")?,
         reference_cmd: reference_cmd.ok_or("--reference-cmd required")?,
         catalog: PathBuf::from(catalog.ok_or("--catalog required")?),
@@ -67,11 +77,14 @@ fn run_op(exe: &str, req: &OpRequest) -> Result<OpResponse, String> {
     child
         .stdin
         .take()
-        .unwrap()
+        .ok_or_else(|| "failed to acquire stdin pipe".to_string())?
         .write_all(json.as_bytes())
         .map_err(|e| e.to_string())?;
     let out = child.wait_with_output().map_err(|e| e.to_string())?;
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    if !out.status.success() {
+        return Err(format!("{exe} exited {}: {}", out.status, stdout.trim()));
+    }
     serde_json::from_str::<OpResponse>(&stdout)
         .map_err(|e| format!("failed to parse response from {exe}: {e}\nraw: {stdout}"))
 }
@@ -229,6 +242,7 @@ fn verify_one(
 
 // ── Matrix generation ────────────────────────────────────────────────────────
 
+// TODO: multi-backend aggregation — currently regenerates from scratch filling only --backend's column; a future step should MERGE per-backend runs into one matrix.
 fn generate_matrix(
     caps: &[Capability],
     results: &[(String, CapResult)], // (id, result) for the run backend

@@ -24,4 +24,7 @@ fn capctl_fills_rust_column_for_cell_io() {
         assert!(r.contains("✅"), "{id} not ✅: {r}");
         assert!(!r.contains("❌") && !r.contains("⚠️"), "{id} regressed: {r}");
     }
+    // The non-rust columns for CELL-WRITE-STRING should remain untested (⬜).
+    let r = row(&m, "CELL-WRITE-STRING");
+    assert!(r.contains("⬜"), "other columns should be untested: {r}");
 }

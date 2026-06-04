@@ -71,24 +71,36 @@ pub struct Support {
 }
 
 /// Extract all ```json ... ``` fenced blocks from a markdown string.
+/// The opening fence info-string is matched case-insensitively and leading/trailing
+/// whitespace is ignored (e.g. "```JSON ", "```Json\t" all match).
 fn extract_json_blocks(markdown: &str) -> Vec<&str> {
     let mut blocks = Vec::new();
     let mut rest = markdown;
-    while let Some(start) = rest.find("```json") {
-        let after_fence = &rest[start + 7..];
-        // skip optional newline after ```json
-        let content_start = if after_fence.starts_with('\n') {
-            &after_fence[1..]
-        } else if after_fence.starts_with("\r\n") {
-            &after_fence[2..]
+    // Scan for opening ``` fences followed by an info-string that equals "json"
+    // (case-insensitive, trimmed).
+    while let Some(fence_start) = rest.find("```") {
+        let after_backticks = &rest[fence_start + 3..];
+        // Read the info string: everything up to the next newline.
+        let newline_pos = after_backticks.find('\n');
+        let (info_raw, after_fence) = if let Some(nl) = newline_pos {
+            (&after_backticks[..nl], &after_backticks[nl + 1..])
         } else {
-            after_fence
+            // No newline found — can't be a valid fenced block; stop.
+            break;
         };
-        if let Some(end) = content_start.find("```") {
-            let block = content_start[..end].trim();
+        // Normalise: strip a possible leading \r from info_raw (for \r\n line endings)
+        let info = info_raw.trim_end_matches('\r').trim();
+        if !info.eq_ignore_ascii_case("json") {
+            // Not a json fence — advance past this ``` and keep looking.
+            rest = &rest[fence_start + 3..];
+            continue;
+        }
+        // We're inside a ```json block. Find the closing ```.
+        if let Some(end) = after_fence.find("```") {
+            let block = after_fence[..end].trim();
             blocks.push(block);
-            // advance past the closing ```
-            let consumed = (start + 7) + (after_fence.len() - content_start.len()) + end + 3;
+            // Advance past the closing ```
+            let consumed = fence_start + 3 + info_raw.len() + 1 + end + 3;
             rest = &rest[consumed..];
         } else {
             break;
@@ -138,5 +150,15 @@ mod tests {
         assert_eq!(blocks.len(), 2);
         assert!(blocks[0].contains("\"X\""));
         assert!(blocks[1].contains("\"Y\""));
+    }
+
+    #[test]
+    fn extract_blocks_case_insensitive() {
+        // Uppercase and mixed-case info strings should be recognised.
+        let md = "```JSON\n{\"id\":\"A\"}\n```\n\n```Json \n{\"id\":\"B\"}\n```\n";
+        let blocks = extract_json_blocks(md);
+        assert_eq!(blocks.len(), 2, "expected 2 blocks, got: {blocks:?}");
+        assert!(blocks[0].contains("\"A\""));
+        assert!(blocks[1].contains("\"B\""));
     }
 }
