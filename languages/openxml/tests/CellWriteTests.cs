@@ -19,7 +19,8 @@ public class CellWriteTests
     ///   languages/openxml/bin/Debug/net10.0/ExcelOps.exe
     /// We walk up from AppContext.BaseDirectory.
     /// </summary>
-    private static string FindExe()
+    /// <summary>Shared helper used by other test classes.</summary>
+    public static string FindExeHelper()
     {
         // The test base dir is something like:
         //   …/languages/openxml/tests/bin/Debug/net10.0/
@@ -42,6 +43,8 @@ public class CellWriteTests
         throw new FileNotFoundException(
             $"ExcelOps.exe not found in bin/Debug/net10.0 or bin/Release/net10.0 under {dir.FullName}");
     }
+
+    private static string FindExe() => FindExeHelper();
 
     private static string RunOp(string json)
     {
