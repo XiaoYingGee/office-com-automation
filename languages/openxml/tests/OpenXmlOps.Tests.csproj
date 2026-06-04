@@ -19,7 +19,7 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
-    <PackageReference Include="DocumentFormat.OpenXml" Version="*" />
+    <PackageReference Include="DocumentFormat.OpenXml" Version="16.0.13823.15015" />
     <PackageReference Include="System.IO.Packaging" Version="*" />
   </ItemGroup>
 

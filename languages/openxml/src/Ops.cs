@@ -40,7 +40,7 @@ public static class Ops
         if (!req.Params.TryGetProperty("kind", out var kindEl))
             throw new OpException(ErrorCategory.InvalidArg, "params.kind is required");
         string kind = kindEl.GetString()
-            ?? throw new OpException(ErrorCategory.InvalidArg, "params.kind must be a string");
+            ?? throw new OpException(ErrorCategory.InvalidArg, $"params.kind must be a string (got {kindEl.ValueKind})");
 
         if (!req.Params.TryGetProperty("value", out var valueEl))
             throw new OpException(ErrorCategory.InvalidArg, "params.value is required");
@@ -55,7 +55,6 @@ public static class Ops
         }
 
         // Determine output path
-        string outputPath = req.SaveAs?.Path ?? req.Path;
         bool useSaveAs = req.SaveAs is not null &&
             !string.Equals(req.SaveAs.Path, req.Path, StringComparison.OrdinalIgnoreCase);
 
@@ -193,7 +192,8 @@ public static class Ops
                     break;
                 }
             }
-            // Fall back to first sheet (mirrors Rust resolve_sheet_write behavior)
+            // Fall back to first sheet — INTENTIONAL: mirrors Rust resolve_sheet_write, so
+            // locale-dependent default names (e.g. "工作表1") still work on freshly-created workbooks.
             if (targetSheet is null)
                 targetSheet = sheets.Elements<Sheet>().FirstOrDefault();
         }

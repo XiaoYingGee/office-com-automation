@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Spreadsheet;
 using Xunit;
 
 namespace OpenXmlOps.Tests;
@@ -21,20 +23,24 @@ public class CellWriteTests
     {
         // The test base dir is something like:
         //   …/languages/openxml/tests/bin/Debug/net10.0/
-        // Walk up to find ExcelOps.exe relative to the openxml folder.
+        // Walk up 4 levels from tests/bin/{config}/net10.0 → languages/openxml
         string baseDir = AppContext.BaseDirectory;
-        // Go up 4 levels from tests/bin/Debug/net10.0 → languages/openxml
         DirectoryInfo? dir = new DirectoryInfo(baseDir);
         for (int i = 0; i < 4; i++) dir = dir?.Parent;
 
         if (dir is null)
             throw new InvalidOperationException($"Could not navigate up from {baseDir}");
 
-        string candidate = Path.Combine(dir.FullName, "bin", "Debug", "net10.0", "ExcelOps.exe");
-        if (!File.Exists(candidate))
-            throw new FileNotFoundException($"ExcelOps.exe not found at {candidate}");
+        // Try Debug first, then Release
+        foreach (var config in new[] { "Debug", "Release" })
+        {
+            string candidate = Path.Combine(dir.FullName, "bin", config, "net10.0", "ExcelOps.exe");
+            if (File.Exists(candidate))
+                return candidate;
+        }
 
-        return candidate;
+        throw new FileNotFoundException(
+            $"ExcelOps.exe not found in bin/Debug/net10.0 or bin/Release/net10.0 under {dir.FullName}");
     }
 
     private static string RunOp(string json)
@@ -176,6 +182,88 @@ public class CellWriteTests
             // Both cells should be readable
             Assert.Equal("first",  OpenXmlReadback.ReadCellString(path, "Sheet1", "C3"));
             Assert.Equal("second", OpenXmlReadback.ReadCellString(path, "Sheet1", "A1"));
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    // ---------------------------------------------------------------------------
+    // EnsureCell guard: same-row insertion and overwrite correctness
+    // ---------------------------------------------------------------------------
+
+    [Fact]
+    public void WriteTwoCellsSameRow_bothReadable()
+    {
+        // Exercises inserting a cell into an existing row's cell list (same row,
+        // different new columns) — a previously uncovered EnsureCell path.
+        string path = TempXlsx("samerow");
+        try
+        {
+            string req1 = JsonSerializer.Serialize(new
+            {
+                op = "cell.write",
+                path,
+                target = new { sheet = "Sheet1", range = "A1" },
+                @params = new { kind = "string", value = "alpha" },
+            });
+            string req2 = JsonSerializer.Serialize(new
+            {
+                op = "cell.write",
+                path,
+                target = new { sheet = "Sheet1", range = "C1" },
+                @params = new { kind = "string", value = "gamma" },
+            });
+
+            Assert.Contains("\"ok\":true", RunOp(req1));
+            Assert.Contains("\"ok\":true", RunOp(req2));
+
+            Assert.Equal("alpha", OpenXmlReadback.ReadCellString(path, "Sheet1", "A1"));
+            Assert.Equal("gamma", OpenXmlReadback.ReadCellString(path, "Sheet1", "C1"));
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void OverwriteSameCell_replacesValue_noDuplicate()
+    {
+        // Proves FindCell reuse works: the second write must replace the value
+        // AND leave exactly one <c r="A1"> element (no silent duplicate insertion).
+        string path = TempXlsx("overwrite");
+        try
+        {
+            string req1 = JsonSerializer.Serialize(new
+            {
+                op = "cell.write",
+                path,
+                target = new { sheet = "Sheet1", range = "A1" },
+                @params = new { kind = "string", value = "hello" },
+            });
+            string req2 = JsonSerializer.Serialize(new
+            {
+                op = "cell.write",
+                path,
+                target = new { sheet = "Sheet1", range = "A1" },
+                @params = new { kind = "string", value = "world" },
+            });
+
+            Assert.Contains("\"ok\":true", RunOp(req1));
+            Assert.Contains("\"ok\":true", RunOp(req2));
+
+            // Value must be the second write
+            Assert.Equal("world", OpenXmlReadback.ReadCellString(path, "Sheet1", "A1"));
+
+            // Must be exactly one <c r="A1"> — no duplicate cells
+            using var doc = SpreadsheetDocument.Open(path, isEditable: false);
+            var wbPart = doc.WorkbookPart!;
+            var sheets = wbPart.Workbook.GetFirstChild<Sheets>()!;
+            var sheet = sheets.Elements<Sheet>().First();
+            var wsPart = (WorksheetPart)wbPart.GetPartById(sheet.Id!.Value!);
+            var sheetData = wsPart.Worksheet.GetFirstChild<SheetData>()!;
+
+            int a1Count = sheetData.Elements<Row>()
+                .SelectMany(r => r.Elements<Cell>())
+                .Count(c => string.Equals(c.CellReference?.Value, "A1", StringComparison.OrdinalIgnoreCase));
+
+            Assert.Equal(1, a1Count);
         }
         finally { if (File.Exists(path)) File.Delete(path); }
     }
