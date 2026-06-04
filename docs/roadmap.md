@@ -7,7 +7,7 @@
 | 阶段 | 名称 | 范围 | 状态 |
 |---|---|---|---|
 | **P0** | 脚手架 + 规划 | 仓库结构、文档、`E01–E12` 任务集、PK 框架、Wine 运行时说明、分语言 plan | ✅ **本期** |
-| P1 | 各语言 Excel 实现 | 6 语言各自实现 `E01–E12`，落 `languages/<lang>/src/` | ⏳ 下一阶段 |
+| P1 | 各语言 Excel 实现 | 3 语言各自实现 `E01–E12`，落 `languages/<lang>/src/` | ✅ 已完成 |
 | P2 | Wine 运行时打通 | 在 sandbox+Wine 跑通各语言，回填 [wine-sandbox-runtime](wine-sandbox-runtime.md) 与能力矩阵 | ⏳ |
 | P3 | 四维 PK 跑分 | 按 [benchmark-spec](benchmark-spec.md) 跑分，填 [pk-framework](pk-framework.md) 记分卡与 README 总览表 | ⏳ |
 | P4 | Word / PowerPoint 扩展 | 复用同套方法，新增 `W01…` / `P01…` 任务集 | ⏳ |
@@ -20,7 +20,7 @@
 - 标准任务集 `E01–E12`（语言无关验收口径）。
 - PK 四维框架 + 基准规范 + 能力矩阵骨架。
 - Wine+sandbox 运行时说明与逐语言可用性预判。
-- 六语言各自的实现 plan（README）。
+- 三语言各自的实现 plan（README）。
 - **不含**任何可运行实现代码、不跑实际跑分。
 
 ## P1 · 各语言 Excel 实现

@@ -41,6 +41,9 @@ x64/
 # ---- 基准结果（按需保留，默认忽略本地草稿） ----
 benchmarks/results/*.local.*
 
+# ---- Rust ----
+target/
+
 # ---- 编辑器/系统 ----
 .idea/
 .vscode/
