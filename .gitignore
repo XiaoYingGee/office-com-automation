@@ -3,14 +3,13 @@
 *.tmp
 *.laccdb
 
-# ---- 生成的产物（基准/任务输出） ----
+# ---- 生成的产物 ----
 *.xlsx
 *.xlsm
 *.xls
 *.docx
 *.pptx
 *.pdf
-!assets/sample-data/**        # 样例数据若需入库，放这里并显式保留
 
 # ---- Python ----
 __pycache__/
@@ -20,9 +19,6 @@ venv/
 *.egg-info/
 # pywin32 早绑定缓存
 gen_py/
-
-# ---- 基准结果（按需保留，默认忽略本地草稿） ----
-benchmarks/results/*.local.*
 
 # ---- 编辑器/系统 ----
 .idea/
