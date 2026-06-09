@@ -7,20 +7,6 @@ using Newtonsoft.Json.Linq;
 
 namespace ExcelMcp
 {
-    /// <summary>
-    /// MCP Server (stdio JSON-RPC 2.0) for Excel automation.
-    ///
-    /// Tools:
-    ///   excel_open           — open/create workbook
-    ///   excel_save           — save workbook
-    ///   excel_inspect        — workbook structure
-    ///   excel_inspect_sheet  — sheet data
-    ///   excel_execute_code   — CodeAct: compile+run C# code in-process
-    ///   excel_execute_actions— structured JSON actions
-    ///
-    /// Usage:
-    ///   ExcelMcp.exe         (reads JSON-RPC from stdin, writes to stdout)
-    /// </summary>
     class Program
     {
         static ExcelEngine _engine;
@@ -31,7 +17,6 @@ namespace ExcelMcp
             Console.InputEncoding = Encoding.UTF8;
             Console.OutputEncoding = Encoding.UTF8;
 
-            // MCP stdio transport: read Content-Length header + JSON body
             while (true)
             {
                 string message = ReadMessage();
@@ -41,11 +26,12 @@ namespace ExcelMcp
                 {
                     JObject request = JObject.Parse(message);
                     JObject response = HandleRequest(request);
-                    WriteMessage(response.ToString(Formatting.None));
+                    if (response != null)
+                        WriteMessage(response.ToString(Formatting.None));
                 }
                 catch (Exception ex)
                 {
-                    var errResp = MakeError(-32603, ex.Message, null);
+                    JObject errResp = MakeError(-32603, ex.Message, null);
                     WriteMessage(errResp.ToString(Formatting.None));
                 }
             }
@@ -53,7 +39,7 @@ namespace ExcelMcp
             _engine.Close();
         }
 
-        // ---- MCP stdio transport (Content-Length framing) ----
+        // ---- MCP stdio transport ----
 
         static string ReadMessage()
         {
@@ -61,7 +47,7 @@ namespace ExcelMcp
             string line;
             while ((line = Console.ReadLine()) != null)
             {
-                if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
+                if (line.StartsWith("Content-Length:"))
                 {
                     contentLength = int.Parse(line.Substring("Content-Length:".Length).Trim());
                 }
@@ -87,7 +73,7 @@ namespace ExcelMcp
         static void WriteMessage(string json)
         {
             byte[] bytes = Encoding.UTF8.GetBytes(json);
-            string header = $"Content-Length: {bytes.Length}\r\n\r\n";
+            string header = "Content-Length: " + bytes.Length + "\r\n\r\n";
             Console.Write(header);
             Console.Write(json);
             Console.Out.Flush();
@@ -97,16 +83,17 @@ namespace ExcelMcp
 
         static JObject HandleRequest(JObject request)
         {
-            string method = (string)request["method"] ?? "";
+            string method = request["method"] != null ? (string)request["method"] : "";
             JToken id = request["id"];
-            JObject pars = request["params"] as JObject ?? new JObject();
+            JObject pars = request["params"] as JObject;
+            if (pars == null) pars = new JObject();
 
             switch (method)
             {
                 case "initialize":
                     return MakeResult(id, GetInitializeResult());
                 case "initialized":
-                    return null; // notification, no response needed
+                    return null;
                 case "tools/list":
                     return MakeResult(id, GetToolsList());
                 case "tools/call":
@@ -121,100 +108,82 @@ namespace ExcelMcp
 
         static JObject GetInitializeResult()
         {
-            return JObject.FromObject(new
-            {
-                protocolVersion = "2024-11-05",
-                capabilities = new { tools = new { } },
-                serverInfo = new { name = "excel-mcp", version = "1.0.0" }
-            });
+            var r = new JObject();
+            r.Add("protocolVersion", "2024-11-05");
+            var caps = new JObject();
+            caps.Add("tools", new JObject());
+            r.Add("capabilities", caps);
+            var info = new JObject();
+            info.Add("name", "excel-mcp");
+            info.Add("version", "1.0.0");
+            r.Add("serverInfo", info);
+            return r;
         }
 
         static JObject GetToolsList()
         {
-            var tools = new JArray
-            {
-                MakeToolDef("excel_open",
-                    "Open or create an Excel workbook. Args: path (string), create (bool, optional).",
-                    new { type = "object", properties = new {
-                        path = new { type = "string", description = "File path (.xlsx)" },
-                        create = new { type = "boolean", description = "Create new if true" }
-                    }, required = new[] { "path" } }),
+            var tools = new JArray();
+            tools.Add(MakeToolDef("excel_open",
+                "Open or create an Excel workbook. Args: path (string), create (bool, optional).",
+                MakeSchema(new string[] { "path" }, new string[] { "path", "create" })));
+            tools.Add(MakeToolDef("excel_save",
+                "Save the current workbook. Args: path (string, optional for SaveAs).",
+                MakeSchema(new string[0], new string[] { "path" })));
+            tools.Add(MakeToolDef("excel_inspect",
+                "Return workbook structure: sheets with names, used ranges, row/col counts.",
+                MakeSchema(new string[0], new string[0])));
+            tools.Add(MakeToolDef("excel_inspect_sheet",
+                "Return sheet data as 2D array. Args: sheet (name or index), max_rows, max_cols.",
+                MakeSchema(new string[0], new string[] { "sheet", "max_rows", "max_cols" })));
+            tools.Add(MakeToolDef("excel_execute_code",
+                "Execute C# code in Excel process via CSharpCodeProvider. "
+                + "Available: app (Excel.Application), wb (ActiveWorkbook), ws (ActiveSheet). "
+                + "Return a string from your code. Colors are BGR. Indices are 1-based. "
+                + "Example: ws.Range[\"A1\"].Value2 = \"Hello\"; return \"done\";",
+                MakeSchema(new string[] { "code" }, new string[] { "code" })));
+            tools.Add(MakeToolDef("excel_execute_actions",
+                "Execute structured JSON actions (batch). "
+                + "Actions: write_cell, read_cell, write_range, read_range, clear_range, merge_cells, "
+                + "set_format, insert_rows, delete_rows, add_sheet, rename_sheet, delete_sheet, "
+                + "sort_range, find_replace, calculate, export_pdf.",
+                MakeSchema(new string[] { "actions" }, new string[] { "actions" })));
 
-                MakeToolDef("excel_save",
-                    "Save the current workbook. Args: path (string, optional — SaveAs if provided).",
-                    new { type = "object", properties = new {
-                        path = new { type = "string", description = "SaveAs path (optional)" }
-                    } }),
-
-                MakeToolDef("excel_inspect",
-                    "Return workbook structure: sheets with names, used ranges, row/col counts.",
-                    new { type = "object", properties = new { } }),
-
-                MakeToolDef("excel_inspect_sheet",
-                    "Return sheet data as 2D array. Args: sheet (name or index), max_rows, max_cols.",
-                    new { type = "object", properties = new {
-                        sheet = new { type = "string", description = "Sheet name or 1-based index", @default = "1" },
-                        max_rows = new { type = "integer", description = "Max rows to return", @default = 50 },
-                        max_cols = new { type = "integer", description = "Max cols to return", @default = 26 }
-                    } }),
-
-                MakeToolDef("excel_execute_code",
-                    @"Execute C# code in Excel process. The code is compiled via CSharpCodeProvider and run in-process.
-
-Available variables (passed as parameters to your Execute method):
-  Excel.Application app  — the running Excel instance
-  Excel.Workbook wb      — ActiveWorkbook
-  Excel.Worksheet ws     — ActiveSheet
-
-Return a string (will be sent back as result). Use null for no return value.
-
-Example:
-  ws.Range[""A1""].Value2 = ""Hello"";
-  ws.Range[""A1""].Font.Bold = true;
-  return ""done"";
-
-Example (read data):
-  var used = ws.UsedRange;
-  return $""{used.Rows.Count} rows x {used.Columns.Count} cols"";
-
-Example (bulk write):
-  for (int i = 1; i <= 100; i++) {
-      ws.Cells[i, 1].Value2 = i;
-      ws.Cells[i, 2].Value2 = i * i;
-  }
-  ws.Range[""A1:B100""].Columns.AutoFit();
-  return ""wrote 100 rows"";
-
-Note: Colors are BGR (red = 0x0000FF, blue = 0xFF0000). Indices are 1-based.",
-                    new { type = "object", properties = new {
-                        code = new { type = "string", description = "C# code body (inside a method returning string)" }
-                    }, required = new[] { "code" } }),
-
-                MakeToolDef("excel_execute_actions",
-                    @"Execute structured JSON actions (batch). Each action: {""action"":""write_cell"",""sheet"":""Sheet1"",""cell"":""A1"",""value"":42}
-Available actions: write_cell, read_cell, write_range, read_range, clear_range, merge_cells, unmerge_cells, set_format, set_border, insert_rows, delete_rows, insert_cols, delete_cols, add_sheet, rename_sheet, delete_sheet, sort_range, find_replace, calculate, export_pdf, and more.",
-                    new { type = "object", properties = new {
-                        actions = new { type = "string", description = "JSON string: single action object or array of actions" }
-                    }, required = new[] { "actions" } })
-            };
-
-            return new JObject { ["tools"] = tools };
+            var result = new JObject();
+            result.Add("tools", tools);
+            return result;
         }
 
-        static JObject MakeToolDef(string name, string description, object inputSchema)
+        static JObject MakeSchema(string[] required, string[] properties)
         {
-            return new JObject
+            var schema = new JObject();
+            schema.Add("type", "object");
+            var props = new JObject();
+            foreach (string p in properties)
             {
-                ["name"] = name,
-                ["description"] = description,
-                ["inputSchema"] = JObject.FromObject(inputSchema)
-            };
+                var prop = new JObject();
+                prop.Add("type", "string");
+                props.Add(p, prop);
+            }
+            schema.Add("properties", props);
+            if (required.Length > 0)
+                schema.Add("required", new JArray(required));
+            return schema;
+        }
+
+        static JObject MakeToolDef(string name, string description, JObject inputSchema)
+        {
+            var tool = new JObject();
+            tool.Add("name", name);
+            tool.Add("description", description);
+            tool.Add("inputSchema", inputSchema);
+            return tool;
         }
 
         static JObject HandleToolCall(JObject pars)
         {
-            string toolName = (string)pars["name"] ?? "";
-            JObject arguments = pars["arguments"] as JObject ?? new JObject();
+            string toolName = pars["name"] != null ? (string)pars["name"] : "";
+            JObject arguments = pars["arguments"] as JObject;
+            if (arguments == null) arguments = new JObject();
 
             string resultText;
             bool isError = false;
@@ -230,80 +199,68 @@ Available actions: write_cell, read_cell, write_range, read_range, clear_range, 
                         resultText = ToolSave(arguments);
                         break;
                     case "excel_inspect":
-                        resultText = ToolInspect();
+                        resultText = _engine.Inspect();
                         break;
                     case "excel_inspect_sheet":
                         resultText = ToolInspectSheet(arguments);
                         break;
                     case "excel_execute_code":
-                        resultText = ToolExecuteCode(arguments);
+                        resultText = _engine.ExecuteCode((string)arguments["code"] ?? "");
                         break;
                     case "excel_execute_actions":
-                        resultText = ToolExecuteActions(arguments);
+                        resultText = _engine.ExecuteActions((string)arguments["actions"] ?? "[]");
                         break;
                     default:
-                        resultText = JsonConvert.SerializeObject(new { ok = false, error = "Unknown tool: " + toolName });
+                        resultText = "{\"ok\":false,\"error\":\"Unknown tool: " + toolName + "\"}";
                         isError = true;
                         break;
                 }
             }
             catch (Exception ex)
             {
-                resultText = JsonConvert.SerializeObject(new { ok = false, error = ex.Message, traceback = ex.StackTrace });
+                var err = new Dictionary<string, object>();
+                err.Add("ok", false);
+                err.Add("error", ex.Message);
+                resultText = JsonConvert.SerializeObject(err);
                 isError = true;
             }
 
-            return new JObject
-            {
-                ["content"] = new JArray { new JObject { ["type"] = "text", ["text"] = resultText } },
-                ["isError"] = isError
-            };
-        }
+            var content = new JArray();
+            var textItem = new JObject();
+            textItem.Add("type", "text");
+            textItem.Add("text", resultText);
+            content.Add(textItem);
 
-        // ---- Tool implementations ----
+            var response = new JObject();
+            response.Add("content", content);
+            response.Add("isError", isError);
+            return response;
+        }
 
         static string ToolOpen(JObject args)
         {
             string path = (string)args["path"];
-            bool create = args["create"]?.Value<bool>() ?? false;
+            bool create = args["create"] != null && (bool)args["create"];
             if (create)
                 _engine.Create(path);
             else
                 _engine.Open(path);
-            var info = _engine.Inspect();
-            return JsonConvert.SerializeObject(new { ok = true, path = _engine.FilePath, sheets = info });
+            return _engine.Inspect();
         }
 
         static string ToolSave(JObject args)
         {
-            string path = (string)args["path"];
+            string path = args["path"] != null ? (string)args["path"] : null;
             _engine.Save(path);
-            return JsonConvert.SerializeObject(new { ok = true });
-        }
-
-        static string ToolInspect()
-        {
-            return JsonConvert.SerializeObject(_engine.Inspect());
+            return "{\"ok\":true}";
         }
 
         static string ToolInspectSheet(JObject args)
         {
-            string sheet = (string)args["sheet"] ?? "1";
-            int maxRows = args["max_rows"]?.Value<int>() ?? 50;
-            int maxCols = args["max_cols"]?.Value<int>() ?? 26;
-            return JsonConvert.SerializeObject(_engine.InspectSheet(sheet, maxRows, maxCols));
-        }
-
-        static string ToolExecuteCode(JObject args)
-        {
-            string code = (string)args["code"] ?? "";
-            return _engine.ExecuteCode(code);
-        }
-
-        static string ToolExecuteActions(JObject args)
-        {
-            string actionsJson = (string)args["actions"] ?? "[]";
-            return _engine.ExecuteActions(actionsJson);
+            string sheet = args["sheet"] != null ? (string)args["sheet"] : "1";
+            int maxRows = args["max_rows"] != null ? args["max_rows"].Value<int>() : 50;
+            int maxCols = args["max_cols"] != null ? args["max_cols"].Value<int>() : 26;
+            return _engine.InspectSheet(sheet, maxRows, maxCols);
         }
 
         // ---- Helpers ----
@@ -311,22 +268,23 @@ Available actions: write_cell, read_cell, write_range, read_range, clear_range, 
         static JObject MakeResult(JToken id, JObject result)
         {
             if (result == null) return null;
-            return new JObject
-            {
-                ["jsonrpc"] = "2.0",
-                ["id"] = id,
-                ["result"] = result
-            };
+            var r = new JObject();
+            r.Add("jsonrpc", "2.0");
+            r.Add("id", id);
+            r.Add("result", result);
+            return r;
         }
 
         static JObject MakeError(int code, string message, JToken id)
         {
-            return new JObject
-            {
-                ["jsonrpc"] = "2.0",
-                ["id"] = id,
-                ["error"] = new JObject { ["code"] = code, ["message"] = message }
-            };
+            var err = new JObject();
+            err.Add("code", code);
+            err.Add("message", message);
+            var r = new JObject();
+            r.Add("jsonrpc", "2.0");
+            r.Add("id", id);
+            r.Add("error", err);
+            return r;
         }
     }
 }

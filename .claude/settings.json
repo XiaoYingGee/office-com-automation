@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "Bash(py *)"
+    ]
+  },
+  "mcpServers": {
+    "excel-pywin32": {
+      "command": "py",
+      "args": [
+        "D:\\Workspace\\AI\\office-com-automation\\mcp_server\\excel_mcp.py"
+      ]
+    },
+    "excel-addin": {
+      "command": "py",
+      "args": [
+        "D:\\Workspace\\AI\\office-com-automation\\mcp_server\\excel_mcp_addin.py"
+      ]
+    },
+    "excel-csharp": {
+      "command": "D:\\Workspace\\AI\\office-com-automation\\mcp_server_csharp\\ExcelMcp\\bin\\Release\\net48\\ExcelMcp.exe",
+      "args": []
+    }
+  }
+}

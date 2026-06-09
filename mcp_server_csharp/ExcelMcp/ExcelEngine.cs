@@ -12,16 +12,13 @@ using Excel = Microsoft.Office.Interop.Excel;
 
 namespace ExcelMcp
 {
-    /// <summary>
-    /// Excel COM engine + CSharpCodeProvider-based CodeAct executor.
-    /// All operations run in the same process as Excel (when used as add-in)
-    /// or cross-process via COM (when used standalone).
-    /// </summary>
     class ExcelEngine
     {
         private Excel.Application _app;
         private Excel.Workbook _wb;
-        public string FilePath { get; private set; }
+        private string _filePath;
+
+        public string FilePath { get { return _filePath; } }
 
         public ExcelEngine()
         {
@@ -32,18 +29,18 @@ namespace ExcelMcp
 
         public void Open(string path)
         {
-            FilePath = Path.GetFullPath(path);
-            _wb = _app.Workbooks.Open(FilePath);
+            _filePath = Path.GetFullPath(path);
+            _wb = _app.Workbooks.Open(_filePath);
         }
 
         public void Create(string path)
         {
-            FilePath = Path.GetFullPath(path);
+            _filePath = Path.GetFullPath(path);
             _wb = _app.Workbooks.Add();
-            _wb.SaveAs(FilePath, 51); // xlOpenXMLWorkbook
+            _wb.SaveAs(_filePath, 51);
         }
 
-        public void Save(string path = null)
+        public void Save(string path)
         {
             if (!string.IsNullOrEmpty(path))
                 _wb.SaveAs(Path.GetFullPath(path), 51);
@@ -53,8 +50,8 @@ namespace ExcelMcp
 
         public void Close()
         {
-            try { _wb?.Close(false); } catch { }
-            try { _app?.Quit(); } catch { }
+            try { if (_wb != null) _wb.Close(false); } catch { }
+            try { if (_app != null) _app.Quit(); } catch { }
             if (_app != null) Marshal.ReleaseComObject(_app);
             _app = null;
         }
@@ -63,48 +60,50 @@ namespace ExcelMcp
         {
             if (_wb != null) return _wb;
             try { _wb = _app.ActiveWorkbook; } catch { }
-            if (_wb == null) throw new InvalidOperationException("No workbook open. Use excel_open first.");
+            if (_wb == null) throw new InvalidOperationException("No workbook open.");
             return _wb;
         }
 
         private Excel.Worksheet GetSheet(string sheetRef)
         {
             Excel.Workbook wb = Wb();
-            if (int.TryParse(sheetRef, out int idx))
+            int idx;
+            if (int.TryParse(sheetRef, out idx))
                 return (Excel.Worksheet)wb.Worksheets[idx];
             return (Excel.Worksheet)wb.Worksheets[sheetRef];
         }
 
         // ---- Inspect ----
 
-        public object Inspect()
+        public string Inspect()
         {
             Excel.Workbook wb = Wb();
-            var sheets = new List<object>();
+            var sheets = new List<Dictionary<string, object>>();
             for (int i = 1; i <= wb.Worksheets.Count; i++)
             {
                 Excel.Worksheet ws = (Excel.Worksheet)wb.Worksheets[i];
                 Excel.Range used = ws.UsedRange;
-                sheets.Add(new Dictionary<string, object>
-                {
-                    ["index"] = i,
-                    ["name"] = ws.Name,
-                    ["used_range"] = used?.Address ?? "",
-                    ["rows"] = used?.Rows.Count ?? 0,
-                    ["cols"] = used?.Columns.Count ?? 0,
-                });
+                var d = new Dictionary<string, object>();
+                d.Add("index", i);
+                d.Add("name", ws.Name);
+                d.Add("used_range", used != null ? used.Address : "");
+                d.Add("rows", used != null ? used.Rows.Count : 0);
+                d.Add("cols", used != null ? used.Columns.Count : 0);
+                sheets.Add(d);
             }
-            return new Dictionary<string, object> { ["sheets"] = sheets };
+            var result = new Dictionary<string, object>();
+            result.Add("sheets", sheets);
+            return JsonConvert.SerializeObject(result);
         }
 
-        public object InspectSheet(string sheetRef, int maxRows, int maxCols)
+        public string InspectSheet(string sheetRef, int maxRows, int maxCols)
         {
             Excel.Worksheet ws = GetSheet(sheetRef);
             Excel.Range used = ws.UsedRange;
-            int rows = Math.Min(used?.Rows.Count ?? 0, maxRows);
-            int cols = Math.Min(used?.Columns.Count ?? 0, maxCols);
-            int startRow = used?.Row ?? 1;
-            int startCol = used?.Column ?? 1;
+            int rows = Math.Min(used != null ? used.Rows.Count : 0, maxRows);
+            int cols = Math.Min(used != null ? used.Columns.Count : 0, maxCols);
+            int startRow = used != null ? used.Row : 1;
+            int startCol = used != null ? used.Column : 1;
 
             var data = new List<List<object>>();
             for (int r = startRow; r < startRow + rows; r++)
@@ -114,12 +113,11 @@ namespace ExcelMcp
                     row.Add(((Excel.Range)ws.Cells[r, c]).Value2);
                 data.Add(row);
             }
-            return new Dictionary<string, object>
-            {
-                ["name"] = ws.Name,
-                ["used_range"] = used?.Address ?? "",
-                ["data"] = data
-            };
+            var result = new Dictionary<string, object>();
+            result.Add("name", ws.Name);
+            result.Add("used_range", used != null ? used.Address : "");
+            result.Add("data", data);
+            return JsonConvert.SerializeObject(result);
         }
 
         // ---- CodeAct: CSharpCodeProvider ----
@@ -129,13 +127,11 @@ namespace ExcelMcp
             Excel.Workbook wb = Wb();
             Excel.Worksheet ws = (Excel.Worksheet)wb.ActiveSheet;
 
-            // Wrap user code in a static method
             string fullSource = @"
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using Excel = Microsoft.Office.Interop.Excel;
 using System.Runtime.InteropServices;
+using Excel = Microsoft.Office.Interop.Excel;
 
 public class ExcelScript
 {
@@ -145,17 +141,11 @@ public class ExcelScript
         return null;
     }
 }";
-
-            // Compile
             var provider = new CSharpCodeProvider();
-            var parameters = new CompilerParameters
-            {
-                GenerateInMemory = true,
-                GenerateExecutable = false,
-                TreatWarningsAsErrors = false,
-            };
-
-            // Add references
+            var parameters = new CompilerParameters();
+            parameters.GenerateInMemory = true;
+            parameters.GenerateExecutable = false;
+            parameters.TreatWarningsAsErrors = false;
             parameters.ReferencedAssemblies.Add("System.dll");
             parameters.ReferencedAssemblies.Add("System.Core.dll");
             parameters.ReferencedAssemblies.Add("Microsoft.CSharp.dll");
@@ -170,83 +160,79 @@ public class ExcelScript
                 foreach (CompilerError err in results.Errors)
                 {
                     if (!err.IsWarning)
-                        sb.AppendLine($"Line {err.Line - 9}: {err.ErrorText}");
+                        sb.AppendLine("Line " + (err.Line - 9) + ": " + err.ErrorText);
                 }
-                return JsonConvert.SerializeObject(new
-                {
-                    ok = false,
-                    error = "Compilation failed",
-                    details = sb.ToString()
-                });
+                var errResult = new Dictionary<string, object>();
+                errResult.Add("ok", false);
+                errResult.Add("error", "Compilation failed");
+                errResult.Add("details", sb.ToString());
+                return JsonConvert.SerializeObject(errResult);
             }
 
-            // Execute
             try
             {
                 Assembly assembly = results.CompiledAssembly;
                 Type scriptType = assembly.GetType("ExcelScript");
                 MethodInfo method = scriptType.GetMethod("Execute");
                 object result = method.Invoke(null, new object[] { _app, wb, ws });
-                return JsonConvert.SerializeObject(new
-                {
-                    ok = true,
-                    result = result?.ToString()
-                });
+                var okResult = new Dictionary<string, object>();
+                okResult.Add("ok", true);
+                okResult.Add("result", result != null ? result.ToString() : null);
+                return JsonConvert.SerializeObject(okResult);
             }
             catch (TargetInvocationException ex)
             {
-                Exception inner = ex.InnerException ?? ex;
-                return JsonConvert.SerializeObject(new
-                {
-                    ok = false,
-                    error = inner.Message,
-                    traceback = inner.StackTrace
-                });
+                Exception inner = ex.InnerException != null ? ex.InnerException : ex;
+                var errResult = new Dictionary<string, object>();
+                errResult.Add("ok", false);
+                errResult.Add("error", inner.Message);
+                errResult.Add("traceback", inner.StackTrace);
+                return JsonConvert.SerializeObject(errResult);
             }
             catch (Exception ex)
             {
-                return JsonConvert.SerializeObject(new
-                {
-                    ok = false,
-                    error = ex.Message,
-                    traceback = ex.StackTrace
-                });
+                var errResult = new Dictionary<string, object>();
+                errResult.Add("ok", false);
+                errResult.Add("error", ex.Message);
+                errResult.Add("traceback", ex.StackTrace);
+                return JsonConvert.SerializeObject(errResult);
             }
         }
 
-        // ---- Action dispatch (structured JSON) ----
+        // ---- Action dispatch ----
 
         public string ExecuteActions(string actionsJson)
         {
             JToken parsed = JToken.Parse(actionsJson);
-            JArray actions = parsed is JArray arr ? arr : new JArray { parsed };
+            JArray actions = parsed is JArray ? (JArray)parsed : new JArray { parsed };
             var results = new List<object>();
 
-            foreach (JObject action in actions)
+            foreach (JToken item in actions)
             {
+                JObject action = (JObject)item;
                 try
                 {
                     results.Add(DispatchAction(action));
                 }
                 catch (Exception ex)
                 {
-                    results.Add(new Dictionary<string, object>
-                    {
-                        ["ok"] = false,
-                        ["action"] = (string)action["action"] ?? "",
-                        ["error"] = ex.Message
-                    });
+                    var err = new Dictionary<string, object>();
+                    err.Add("ok", false);
+                    err.Add("action", (string)action["action"] ?? "");
+                    err.Add("error", ex.Message);
+                    results.Add(err);
                 }
             }
 
             return JsonConvert.SerializeObject(results);
         }
 
-        private object DispatchAction(JObject action)
+        private Dictionary<string, object> DispatchAction(JObject action)
         {
             string name = (string)action["action"] ?? "";
-            string sheet = action["sheet"]?.ToString() ?? "1";
-            JObject pars = action["params"] as JObject ?? new JObject();
+            string sheet = action["sheet"] != null ? action["sheet"].ToString() : "1";
+            JObject pars = action["params"] as JObject;
+            if (pars == null) pars = new JObject();
 
             switch (name)
             {
@@ -256,9 +242,9 @@ public class ExcelScript
                     string cell = (string)action["cell"];
                     string kind = (string)action["kind"] ?? "auto";
                     if (kind == "formula")
-                        ws.Range[cell].Formula = action["value"]?.ToString();
+                        ws.Range[cell].Formula = action["value"] != null ? action["value"].ToString() : "";
                     else
-                        ws.Range[cell].Value2 = action["value"]?.ToObject<object>();
+                        ws.Range[cell].Value2 = action["value"] != null ? action["value"].ToObject<object>() : null;
                     return Ok(name);
                 }
                 case "read_cell":
@@ -270,7 +256,11 @@ public class ExcelScript
                     if (prop == "formula") val = ws.Range[cell].Formula;
                     else if (prop == "text") val = ws.Range[cell].Text;
                     else val = ws.Range[cell].Value2;
-                    return new Dictionary<string, object> { ["ok"] = true, ["action"] = name, ["value"] = val };
+                    var r = new Dictionary<string, object>();
+                    r.Add("ok", true);
+                    r.Add("action", name);
+                    r.Add("value", val);
+                    return r;
                 }
                 case "write_range":
                 {
@@ -279,13 +269,14 @@ public class ExcelScript
                     if (rows != null)
                     {
                         int rc = rows.Count;
-                        int cc = (rows[0] as JArray)?.Count ?? 1;
+                        JArray firstRow = rows[0] as JArray;
+                        int cc = firstRow != null ? firstRow.Count : 1;
                         object[,] data = new object[rc, cc];
-                        for (int r = 0; r < rc; r++)
+                        for (int ri = 0; ri < rc; ri++)
                         {
-                            JArray row = rows[r] as JArray;
-                            for (int c = 0; c < cc; c++)
-                                data[r, c] = row?[c]?.ToObject<object>();
+                            JArray row = rows[ri] as JArray;
+                            for (int ci = 0; ci < cc; ci++)
+                                data[ri, ci] = row != null && row[ci] != null ? row[ci].ToObject<object>() : null;
                         }
                         ws.Range[(string)action["range"]].Value2 = data;
                     }
@@ -294,11 +285,15 @@ public class ExcelScript
                 case "read_range":
                 {
                     object val = GetSheet(sheet).Range[(string)action["range"]].Value2;
-                    return new Dictionary<string, object> { ["ok"] = true, ["action"] = name, ["values"] = val };
+                    var r = new Dictionary<string, object>();
+                    r.Add("ok", true);
+                    r.Add("action", name);
+                    r.Add("values", val);
+                    return r;
                 }
                 case "clear_range":
                 {
-                    string mode = (string)pars["mode"] ?? "contents";
+                    string mode = pars["mode"] != null ? (string)pars["mode"] : "contents";
                     Excel.Range rng = GetSheet(sheet).Range[(string)action["range"]];
                     if (mode == "all") rng.Clear(); else rng.ClearContents();
                     return Ok(name);
@@ -325,7 +320,7 @@ public class ExcelScript
                 {
                     Excel.Worksheet ws = GetSheet(sheet);
                     int row = (int)action["row"];
-                    int count = pars["count"]?.Value<int>() ?? 1;
+                    int count = pars["count"] != null ? pars["count"].Value<int>() : 1;
                     for (int i = 0; i < count; i++) ((Excel.Range)ws.Rows[row]).Insert();
                     return Ok(name);
                 }
@@ -333,16 +328,20 @@ public class ExcelScript
                 {
                     Excel.Worksheet ws = GetSheet(sheet);
                     int row = (int)action["row"];
-                    int count = pars["count"]?.Value<int>() ?? 1;
+                    int count = pars["count"] != null ? pars["count"].Value<int>() : 1;
                     ((Excel.Range)ws.Rows[row + ":" + (row + count - 1)]).Delete();
                     return Ok(name);
                 }
                 case "add_sheet":
                 {
                     Excel.Worksheet ws = (Excel.Worksheet)Wb().Worksheets.Add();
-                    string sname = (string)pars["name"];
+                    string sname = pars["name"] != null ? (string)pars["name"] : null;
                     if (!string.IsNullOrEmpty(sname)) ws.Name = sname;
-                    return new Dictionary<string, object> { ["ok"] = true, ["action"] = name, ["name"] = ws.Name };
+                    var r = new Dictionary<string, object>();
+                    r.Add("ok", true);
+                    r.Add("action", name);
+                    r.Add("name", ws.Name);
+                    return r;
                 }
                 case "rename_sheet":
                     ((Excel.Worksheet)Wb().Worksheets[(string)action["old_name"]]).Name = (string)action["new_name"];
@@ -354,10 +353,9 @@ public class ExcelScript
                 {
                     Excel.Worksheet ws = GetSheet(sheet);
                     Excel.Range rng = ws.Range[(string)action["range"]];
-                    string order = (string)pars["order"] ?? "asc";
-                    rng.Sort(Key1: ws.Range[(string)action["key_col"]],
-                             Order1: order == "desc" ? Excel.XlSortOrder.xlDescending : Excel.XlSortOrder.xlAscending,
-                             Header: Excel.XlYesNoGuess.xlYes);
+                    string order = pars["order"] != null ? (string)pars["order"] : "asc";
+                    Excel.XlSortOrder xlOrder = order == "desc" ? Excel.XlSortOrder.xlDescending : Excel.XlSortOrder.xlAscending;
+                    rng.Sort(Key1: ws.Range[(string)action["key_col"]], Order1: xlOrder, Header: Excel.XlYesNoGuess.xlYes);
                     return Ok(name);
                 }
                 case "find_replace":
@@ -371,13 +369,21 @@ public class ExcelScript
                     Wb().ExportAsFixedFormat(Excel.XlFixedFormatType.xlTypePDF, (string)action["path"]);
                     return Ok(name);
                 default:
-                    return new Dictionary<string, object> { ["ok"] = false, ["error"] = "Unknown action: " + name };
+                {
+                    var r = new Dictionary<string, object>();
+                    r.Add("ok", false);
+                    r.Add("error", "Unknown action: " + name);
+                    return r;
+                }
             }
         }
 
         private static Dictionary<string, object> Ok(string action)
         {
-            return new Dictionary<string, object> { ["ok"] = true, ["action"] = action };
+            var r = new Dictionary<string, object>();
+            r.Add("ok", true);
+            r.Add("action", action);
+            return r;
         }
     }
 }
