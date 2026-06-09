@@ -110,14 +110,21 @@ office-com-automation/
 | B8 | Insert 5 Rows | 结构操作 |
 | B9 | Sheet Add+Rename+Delete | 工作表管理 |
 
-### 预期
+### 实测排名 (2026-06-09, 3/4 backends)
 
-| Backend | 架构 | 预期排名 |
-|---------|------|:---:|
-| **VBA** | Python → App.Run(1次) → 进程内执行 | 🥇 |
-| **pywin32** | Python → 每属性1次跨进程COM IPC | 🥈 |
-| **OpenXML** | 文件 I/O，无 Excel 进程 | 🥉 |
-| **Rust** | 无状态: 每op spawn Excel→操作→关闭 | 4th |
+> 详见 `benchmarks/results/benchmark-results.md`。Rust 未测 (每 op spawn Excel，micro-op 套件下过慢)。
+
+| Backend | 架构 | 预期 | **实测** |
+|---------|------|:---:|:---:|
+| **VBA** | Python → App.Run(1次) → 进程内执行 | 🥇 | 🥇 (8/9 最快) |
+| **pywin32** | Python → 每属性1次跨进程COM IPC | 🥈 | 🥈 |
+| **OpenXML** | standalone exe，每 op 启动进程+整文件读写 | 🥉 | **最慢** (每 op ~300ms 固定开销) |
+| **Rust** | 无状态: 每op spawn Excel→操作→关闭 | 4th | 未测 |
+
+**⚠️ 预期修正**: OpenXML 原预测 🥉/"快速文件 I/O"，实测是所有测试里最慢的。
+原因: standalone exe **每 op** 都 *启动进程 + 读整个 .xlsx + 改 + 整文件写回*，
+~300ms 固定开销压倒"不启动 Excel"的收益。其优势仅在大批量一次性变换场景才体现，
+本 benchmark 的小粒度高频 op 反而是其最差场景。
 
 ---
 
