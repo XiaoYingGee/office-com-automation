@@ -1,146 +1,135 @@
-# Excel 自动化 Benchmark
+# Excel MCP Server Benchmark
 
 > 测量日期：2026-06-09
-> 环境：Windows 11 + Microsoft Excel (Office 16.0)、Python 3.10
-> 方法：每后端 × 每尺寸 1 warmup + 3 measured rounds，取均值。
+> 环境：Windows 11 Pro + Microsoft Excel (Office 16.0)
+> 计时方法：server-side `time.perf_counter()` (Python) / `Stopwatch` (C#)，纯 COM 执行时间
 
 ---
 
 ## 1. 概述
 
-本 benchmark 对比在 Windows 上驱动 Excel 的不同自动化后端，跨**三种文档规模**测量 11 项操作的延迟。
+本 benchmark 对比两个 MCP Server 后端驱动 Excel 的真实 COM 执行性能：
 
-最终对比聚焦两个**常驻会话（persistent）**后端：
-
-| 后端 | 机制 | 会话模型 |
-|------|------|----------|
-| **pywin32** | Python → 跨进程 COM IPC，每属性一次往返 | 打开一次，多次操作 |
-| **vba** | Python → `Application.Run` → 进程内 VBA 执行，对象模型零 IPC | 打开一次，多次操作 |
+| 后端 | 机制 | CodeAct |
+|------|------|---------|
+| **excel-pywin32** | Python → 跨进程 COM IPC | `exec()` 执行 Python 代码 |
+| **excel-csharp** | C# .NET 4.8 → 跨进程 COM | `CSharpCodeProvider` 动态编译执行 |
 
 ---
 
-## 2. 方法
+## 2. 测试矩阵 (10 个 Prompt)
 
-**文档规模**（由 `skills/excel-editor/scripts/gen_fixture.py` 生成，seeded 随机内容）：
+| # | 操作 | 文件 | 大小 | 考察点 |
+|---|------|------|------|--------|
+| P1 | 5×5 写入 + 加粗 | bench_empty.xlsx | 5 KB | 基础读写 |
+| P2 | 1000行×10列批量写入 | bench_empty.xlsx | 5 KB | 批量数据 + 格式化 |
+| P3 | 50k行条件查询 + 逐行标黄 | bench_medium.xlsx | 43 MB | 大范围遍历 |
+| P4 | 跨表聚合统计 | bench_medium.xlsx | 43 MB | 数据读取 + 内存计算 |
+| P5 | 柱状图创建 | bench_medium.xlsx | 43 MB | Chart 对象 |
+| P6 | 查找替换 + 公式写入 | bench_medium.xlsx | 43 MB | Replace + Formula |
+| P7 | 大文件追加汇总行 | bench_large.xlsx | 86 MB | 大文件 I/O |
+| P8 | 错误处理 (含预期失败) | bench_empty.xlsx | 5 KB | 异常恢复 |
+| P9 | 月报模板 (合并/公式/条件格式) | bench_empty.xlsx | 5 KB | 复杂格式化 |
+| P10 | 数据透视表 | bench_medium.xlsx | 43 MB | PivotTable |
 
-| 尺寸 | 结构 | 单元格数 | 文件大小 |
-|------|------|---------|---------|
-| empty | 1 sheet，无数据 | 0 | ~6 KB |
-| medium | 3 sheet × 1000 行 × 50 列 | 15 万 | ~1.1 MB |
-| large | 10 sheet × 20000 行 × 100 列 | 2000 万 | ~145 MB |
+---
 
-**运行规则**：每轮将对应尺寸的 fixture 拷贝到独立工作文件（拷贝不计时），后端在副本上操作；空文档维持运行时新建。每后端 1 warmup + 3 measured rounds 取均值。
+## 3. 结果
 
-**复现**：
+### 3.1 Execute 时间对比
 
-```powershell
-cd skills\excel-editor\scripts
-python gen_fixture.py                 # 生成 empty/medium/large fixture
-python benchmark.py --backends pywin32,vba --size empty,medium,large --rounds 3
+| Prompt | pywin32 | csharp | 倍率 | 赢家 |
+|--------|--------:|-------:|:---:|:---:|
+| P1 基础读写 | **14 ms** | 170 ms | 12× | pywin32 |
+| P2 批量写入 | 76 ms | **49 ms** | 0.6× | csharp |
+| P3 条件格式 25k行 | **24,188 ms** | 27,010 ms | 1.1× | pywin32 |
+| P4 跨表汇总 | **149 ms** | 167 ms | 1.1× | pywin32 |
+| P5 图表创建 | **2,440 ms** | 2,571 ms | 1.1× | pywin32 |
+| P6 查找替换+公式 | 1,691 ms | **1,424 ms** | 0.8× | csharp |
+| P7 大文件追加 | **24 ms** | 66 ms | 2.8× | pywin32 |
+| P8 错误恢复 | **17 ms** | 39 ms | 2.3× | pywin32 |
+| P9 复杂格式化 | **252 ms** | 530 ms | 2.1× | pywin32 |
+| P10 透视表 | **737 ms** | 831 ms | 1.1× | pywin32 |
+| **合计** | **29,588 ms** | 32,857 ms | | **pywin32** |
+
+### 3.2 文件 I/O 时间
+
+| 操作 | pywin32 | csharp | 说明 |
+|------|--------:|-------:|------|
+| Open medium (43MB) | 3,266 ms | 3,718 ms | 基本持平 |
+| Open large (86MB) | 6,279 ms | 6,691 ms | 基本持平 |
+| Save medium | ~2,900 ms | ~3,000 ms | 基本持平 |
+| Save large | 5,906 ms | 6,299 ms | 基本持平 |
+
+### 3.3 可视化
+
+```
+P1  基础读写     pywin32 █ 14ms             csharp ████████ 170ms
+P2  批量写入     pywin32 ███ 76ms           csharp ██ 49ms
+P3  条件格式     pywin32 ████████████████ 24.2s    csharp ██████████████████ 27.0s
+P4  跨表汇总     pywin32 █ 149ms            csharp █ 167ms
+P5  图表创建     pywin32 ██████ 2.4s        csharp ██████ 2.6s
+P6  查找替换     pywin32 ████ 1.7s          csharp ████ 1.4s
+P7  大文件追加   pywin32 █ 24ms             csharp █ 66ms
+P8  错误恢复     pywin32 █ 17ms             csharp █ 39ms
+P9  复杂格式化   pywin32 █ 252ms            csharp ██ 530ms
+P10 透视表       pywin32 ██ 737ms           csharp ███ 831ms
 ```
 
-> VBA 后端需 Excel 信任中心开启 "Trust access to the VBA project object model"
-> （注册表 `HKCU\Software\Microsoft\Office\16.0\Excel\Security\AccessVBOM = 1`）。
+---
+
+## 4. 分析
+
+### 4.1 pywin32 整体胜出 (8:2)
+
+pywin32 在 8/10 项中更快，核心原因：
+- Python COM dispatch 对简单属性访问开销极低（无编译步骤）
+- `Range.Value2 = tuple(data)` 自动映射 SAFEARRAY，写入高效
+
+### 4.2 csharp 在批量数组写入占优
+
+C# `object[,]` 2D 数组直接映射 COM SAFEARRAY，在 P2 (49ms vs 76ms) 和 P6 (1424ms vs 1691ms) 中更快。
+
+### 4.3 逐行 COM 调用是唯一瓶颈
+
+P3 对 25k 行逐行设置 `Interior.Color`，两个后端都需 ~25s。占总执行时间的 **80%**。应优先使用 `Range` 批量操作或 `FormatConditions` 代替逐行格式化。
+
+### 4.4 文件 I/O 与后端无关
+
+Open/Save 耗时由 Excel 本身的文件解析/序列化决定，两后端差异 <15%。
+
+### 4.5 C# CSharpCodeProvider 的额外开销
+
+每次 `execute_code` 都要动态编译（~200ms），且类型系统严格可能导致编译失败需重试。pywin32 的 `exec()` 无编译开销。
 
 ---
 
-## 3. 测试矩阵（11 项）
+## 5. 总结
 
-| # | 测试 | 操作 | 考察点 |
-|---|------|------|--------|
-| B0 | Open Workbook | 打开文档 | 文件打开延迟（随文件大小放大） |
-| B1 | Cell Write | 写 5 个单元格 | 基础写入 |
-| B2 | Bulk Write | 写 100×10 区域 | 批量写入 |
-| B3 | Read Cell | 读单元格 | 读取延迟 |
-| B4 | Clear Range | 清除 1000 单元格 | 批量清除 |
-| B5 | Inspect Workbook | 读工作簿结构 | 读密集（IPC 差异最大） |
-| B6 | Batch 10 Writes | 连续 10 次写 | 多次操作累积 |
-| B7 | Format 5 Cells | bold + size + color | 多属性设置 |
-| B8 | Insert 5 Rows | 插入 5 行 | 结构操作 |
-| B9 | Sheet Ops | Add + Rename + Delete | 工作表管理 |
-| B10 | Merge 5 Ranges | 合并 5 个区域 | 合并单元格 |
-
----
-
-## 4. 结果
-
-延迟单位 ms，越低越快，每项更快者加粗。
-
-### 4.1 empty 文档
-
-| 测试 | pywin32 | vba |
-|------|------:|------:|
-| B0 Open Workbook | N/A（无文件） | N/A（无文件） |
-| B1 Cell Write (5) | 488 | **422** |
-| B2 Bulk Write (100×10) | 33 | **31** |
-| B3 Read Cell | 25 | **7** |
-| B4 Clear Range (1000) | 27 | **20** |
-| B5 Inspect | 28 | **13** |
-| B6 Batch 10 Writes | 139 | **6** |
-| B7 Format 5 Cells | 172 | **39** |
-| B8 Insert 5 Rows | 38 | **15** |
-| B9 Sheet Add+Rename+Delete | 51 | **20** |
-| B10 Merge 5 Ranges | 105 | **6** |
-
-### 4.2 medium 文档（15 万单元格）
-
-| 测试 | pywin32 | vba |
-|------|------:|------:|
-| B0 Open Workbook | **751** | 889 |
-| B1 Cell Write (5) | **424** | 551 |
-| B2 Bulk Write (100×10) | 26 | **17** |
-| B3 Read Cell | 13 | **4** |
-| B4 Clear Range (1000) | 78 | **6** |
-| B5 Inspect | 84 | **4** |
-| B6 Batch 10 Writes | 214 | **6** |
-| B7 Format 5 Cells | 123 | **26** |
-| B8 Insert 5 Rows | 46 | **13** |
-| B9 Sheet Add+Rename+Delete | 52 | **15** |
-| B10 Merge 5 Ranges | 204 | **4** |
-
-### 4.3 large 文档（2000 万单元格，~145 MB）
-
-| 测试 | pywin32 | vba |
-|------|------:|------:|
-| B0 Open Workbook | 18532 | **18255** |
-| B1 Cell Write (5) | **452** | 527 |
-| B2 Bulk Write (100×10) | 23 | **21** |
-| B3 Read Cell | 16 | **2** |
-| B4 Clear Range (1000) | 105 | **11** |
-| B5 Inspect | 504 | **121** |
-| B6 Batch 10 Writes | 147 | **28** |
-| B7 Format 5 Cells | 173 | **84** |
-| B8 Insert 5 Rows | 150 | **117** |
-| B9 Sheet Add+Rename+Delete | 65 | **21** |
-| B10 Merge 5 Ranges | 233 | **12** |
-
----
-
-## 5. 分析
-
-### 5.1 VBA 在 IPC 密集型操作上占优
-
-VBA 在 11 项里几乎全胜。差距最大的正是跨进程 COM IPC 主导的操作：
-
-| 测试 | medium pywin32 / vba | 倍数 |
+| 维度 | pywin32 | csharp |
 |------|:---:|:---:|
-| B6 Batch 10 Writes | 214 / 6 | **36×** |
-| B10 Merge 5 Ranges | 204 / 4 | **51×** |
-| B5 Inspect | 84 / 4 | **21×** |
+| Execute 总时间 | **29.6s** | 32.9s |
+| 含 I/O 总时间 | **60.0s** | 64.9s |
+| 成功率 | 10/10 | 10/10 |
+| 代码简洁度 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ |
+| 批量写入性能 | 良好 | **优秀** |
+| 单操作延迟 | **极低** | 中等 |
+| 编译开销 | 无 | ~200ms/次 |
 
-机理：VBA 通过一次 `Application.Run` 把整批操作送入 Excel 进程内执行，对象模型访问零 IPC；pywin32 每访问一个属性就付一次跨进程 COM 往返。操作越细碎、属性访问越多，差距越大。
+**推荐**：默认使用 `excel-pywin32`。在需要大批量 2D 数组写入时 `excel-csharp` 有微弱优势，但 pywin32 的开发体验（无类型错误、无编译步骤）显著更好。
 
-### 5.2 pywin32 仅在两类场景略快
+---
 
-- **B0 Open（medium/large）**：VBA 打开时多一次性的 VBA 模块注入开销，故 pywin32 开文件略快。
-- **B1 首次 Cell Write**：pywin32 的 gencache/COM 早绑定在首写时已暖；VBA 首次 `App.Run` 有一次调用建立开销。稳态下（B6 等）VBA 反超。
+## 6. 复现
 
-### 5.3 文件大小主要冲击"打开"，而非单次操作
+```bash
+# 阅读测试指令
+cat benchmarks/RUN_BENCHMARK.md
 
-随文档从 empty→medium→large：
+# 详细数据
+cat benchmarks/results/benchmark_report.md
+```
 
-- **B0 Open 急剧放大**：empty 不适用 → medium ~0.8s → **large ~18.5s**（两后端都受 145MB 文件解析支配，与后端机制无关）。
-- **单次操作几乎不随规模变化**：B1/B2/B3/B6/B10 等在三尺寸下基本恒定——因为常驻后端打开一次后，后续操作只动局部区域，与总单元格数无关。
-- **少数读密集操作随规模升**：B5 Inspect 在 large 上升到 pywin32 504ms / vba 121ms（要遍历更大的 used range）。
+## 7. 历史对比 (pywin32 vs VBA)
 
-**结论**：对常驻后端，大文档的代价集中在一次性的打开；打开之后的吞吐与小文档相当。
+此前的 benchmark (见本文件 git 历史) 对比了 pywin32 vs VBA 后端。VBA 在 IPC 密集操作上快 20-50×（进程内执行零 IPC），但 VBA 后端已弃用——MCP CodeAct 模式（AI 直接写代码执行）取代了预写 VBA 宏的方式。
