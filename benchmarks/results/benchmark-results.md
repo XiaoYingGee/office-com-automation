@@ -55,7 +55,4 @@
 
 - **pywin32**: Python -> cross-process COM IPC (one call per property), persistent session.
 - **vba**: Python -> Application.Run -> in-process VBA (zero IPC), persistent session.
-- **rust / cpp**: standalone COM exe, one Excel process spawn per op (stateless).
-- **openxml**: standalone .NET exe, whole-file read+write per op, no Excel (stateless).
-- Stateless backends are excluded at the `large` tier: re-opening a ~145 MB file per op is architecturally infeasible (exceeds timeout / takes hours). Shown as N/A.
 - `B0 Open` is N/A for the empty tier (no file to open).

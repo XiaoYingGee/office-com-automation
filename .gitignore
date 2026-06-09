@@ -12,17 +12,6 @@
 *.pdf
 !assets/sample-data/**        # 样例数据若需入库，放这里并显式保留
 
-# ---- .NET / C# ----
-bin/
-obj/
-# Rust binary *sources* live here and must be tracked (the bin/ rule above is for .NET build output)
-!languages/rust/src/bin/
-!languages/rust/src/bin/**
-obj/
-*.user
-*.suo
-.vs/
-
 # ---- Python ----
 __pycache__/
 *.pyc
@@ -32,21 +21,8 @@ venv/
 # pywin32 早绑定缓存
 gen_py/
 
-# ---- C++ ----
-*.obj
-*.exe
-*.dll
-*.ilk
-*.pdb
-Debug/
-Release/
-x64/
-
 # ---- 基准结果（按需保留，默认忽略本地草稿） ----
 benchmarks/results/*.local.*
-
-# ---- Rust ----
-target/
 
 # ---- 编辑器/系统 ----
 .idea/
