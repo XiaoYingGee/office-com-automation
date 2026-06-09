@@ -32,6 +32,9 @@ except Exception:
 
 # Backends that keep the workbook open for the whole session (open once, many ops).
 PERSISTENT_BACKENDS = ("pywin32", "vba")
+# In-process add-in backends (Excel must already be running with the add-in loaded).
+ADDIN_BACKENDS = ("pyaddin", "csharp-addin")
+ALL_BACKENDS = PERSISTENT_BACKENDS + ADDIN_BACKENDS
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -64,6 +67,70 @@ class COMBackend:
             except Exception:
                 pass
             self.engine = None
+
+
+# ---------------------------------------------------------------------------
+# Add-in Backend runner (pyaddin / csharp-addin)
+# ---------------------------------------------------------------------------
+
+ADDIN_PROGIDS = {
+    "pyaddin": "ExcelEditor.PyAddIn",
+    "csharp-addin": "ExcelEditor.AddIn",
+}
+
+
+class AddinBackend:
+    """Drives an in-process add-in via COMAddIns.Item(progid).Object bridge."""
+
+    def __init__(self, name, visible=False):
+        self.name = name
+        self.visible = visible
+        self.app = None
+        self.bridge = None
+        self.wb = None
+        self.filepath = None
+
+    def init_app(self):
+        import win32com.client
+        import pythoncom
+        pythoncom.CoInitialize()
+        try:
+            self.app = win32com.client.gencache.EnsureDispatch("Excel.Application")
+        except Exception:
+            self.app = win32com.client.Dispatch("Excel.Application")
+        self.app.Visible = self.visible
+        self.app.DisplayAlerts = False
+        progid = ADDIN_PROGIDS[self.name]
+        self.bridge = self.app.COMAddIns.Item(progid).Object
+        ping = self.bridge.Ping()
+        if ping != "pong":
+            raise RuntimeError(f"Add-in {progid} did not respond to Ping (got: {ping})")
+
+    def open(self, path):
+        self.filepath = os.path.abspath(path)
+        self.wb = self.app.Workbooks.Open(self.filepath)
+
+    def create(self, path):
+        self.filepath = os.path.abspath(path)
+        self.wb = self.app.Workbooks.Add()
+        self.wb.SaveAs(self.filepath, 51)
+
+    def inspect(self):
+        return json.loads(self.bridge.InspectJson())
+
+    def execute_action(self, action):
+        return json.loads(self.bridge.ExecuteActionJson(json.dumps(action, ensure_ascii=False)))
+
+    def stop(self):
+        try:
+            if self.wb:
+                self.wb.Close(False)
+            if self.app:
+                self.app.Quit()
+        except Exception:
+            pass
+        self.app = None
+        self.bridge = None
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +344,107 @@ def _cell(data):
     return "—"
 
 
+def run_benchmark_addin(backend, workdir, size):
+    """Run benchmarks for an add-in backend at a given size."""
+    results = {}
+    filepath, has_file = prepare_working_file(workdir, backend.name, size)
+
+    backend.init_app()
+
+    try:
+        if has_file:
+            t0 = time.perf_counter()
+            backend.open(filepath)
+            results["B0_open"] = {"ops": 1, "total_ms": round((time.perf_counter() - t0) * 1000, 1), "ok": True}
+        else:
+            backend.create(filepath)
+            results["B0_open"] = {"note": "N/A (no file)"}
+
+        # B1: cell.write (5 cells via execute_action)
+        times = []
+        test_values = [("auto", "Hello"), ("auto", 42), ("auto", 3.14159),
+                       ("auto", True), ("formula", "=1+1")]
+        for i, (kind, value) in enumerate(test_values):
+            t0 = time.perf_counter()
+            backend.execute_action({"action": "write_cell", "sheet": "Sheet1",
+                                    "cell": f"A{i+1}", "value": value, "kind": kind})
+            times.append((time.perf_counter() - t0) * 1000)
+        results["B1_cell_write"] = _agg(times)
+
+        # B2: write_range (100x10)
+        bulk_data = gen_bulk_data(100, 10)
+        t0 = time.perf_counter()
+        backend.execute_action({"action": "write_range", "sheet": "Sheet1",
+                                "range": "B1:K100", "values": bulk_data})
+        results["B2_write_bulk_100x10"] = {"ops": 1, "total_ms": round((time.perf_counter() - t0) * 1000, 1), "ok": True}
+
+        # B3: read_cell
+        t0 = time.perf_counter()
+        backend.execute_action({"action": "read_cell", "sheet": "Sheet1", "cell": "A1"})
+        results["B3_range_read"] = {"ops": 1, "total_ms": round((time.perf_counter() - t0) * 1000, 1), "ok": True}
+
+        # B4: clear_range (1000 cells)
+        t0 = time.perf_counter()
+        backend.execute_action({"action": "clear_range", "sheet": "Sheet1",
+                                "range": "B1:K100", "params": {"mode": "contents"}})
+        results["B4_range_clear"] = {"ops": 1, "total_ms": round((time.perf_counter() - t0) * 1000, 1), "ok": True}
+
+        # B5: inspect
+        t0 = time.perf_counter()
+        backend.inspect()
+        results["B5_inspect"] = {"ops": 1, "total_ms": round((time.perf_counter() - t0) * 1000, 1), "ok": True}
+
+        # B6: batch 10 writes
+        times = []
+        for i in range(10):
+            t0 = time.perf_counter()
+            backend.execute_action({"action": "write_cell", "sheet": "Sheet1",
+                                    "cell": f"M{i+1}", "value": i * 100, "kind": "auto"})
+            times.append((time.perf_counter() - t0) * 1000)
+        results["B6_batch_10_writes"] = _agg(times)
+
+        # B7: set_format (5 cells)
+        times = []
+        for i in range(5):
+            t0 = time.perf_counter()
+            backend.execute_action({"action": "set_format", "sheet": "Sheet1",
+                                    "range": f"A{i+1}", "params": {"bold": True, "font_size": 14, "bg_color": 65535}})
+            times.append((time.perf_counter() - t0) * 1000)
+        results["B7_set_format"] = _agg(times)
+
+        # B8: insert 5 rows
+        t0 = time.perf_counter()
+        backend.execute_action({"action": "insert_rows", "sheet": "Sheet1",
+                                "row": 1, "params": {"count": 5}})
+        results["B8_insert_rows"] = {"ops": 1, "total_ms": round((time.perf_counter() - t0) * 1000, 1), "ok": True}
+
+        # B9: sheet add + rename + delete
+        times = []
+        t0 = time.perf_counter()
+        backend.execute_action({"action": "add_sheet", "params": {"name": "BenchSheet"}})
+        times.append((time.perf_counter() - t0) * 1000)
+        t0 = time.perf_counter()
+        backend.execute_action({"action": "rename_sheet", "old_name": "BenchSheet", "new_name": "Renamed"})
+        times.append((time.perf_counter() - t0) * 1000)
+        t0 = time.perf_counter()
+        backend.execute_action({"action": "delete_sheet", "sheet": "Renamed"})
+        times.append((time.perf_counter() - t0) * 1000)
+        results["B9_sheet_ops"] = _agg(times)
+
+        # B10: merge 5 ranges
+        times = []
+        for rng in MERGE_RANGES:
+            t0 = time.perf_counter()
+            backend.execute_action({"action": "merge_cells", "sheet": "Sheet1", "range": rng})
+            times.append((time.perf_counter() - t0) * 1000)
+        results["B10_merge"] = _agg(times)
+
+    finally:
+        backend.stop()
+
+    return results
+
+
 def generate_report(all_results, output_dir, sizes):
     """all_results: {size: {backend: {test: data}}}. One latency table per size."""
     lines = []
@@ -303,6 +471,8 @@ def generate_report(all_results, output_dir, sizes):
     lines.append("## Notes\n")
     lines.append("- **pywin32**: Python -> cross-process COM IPC (one call per property), persistent session.")
     lines.append("- **vba**: Python -> Application.Run -> in-process VBA (zero IPC), persistent session.")
+    lines.append("- **pyaddin**: Python COM add-in (in-process), one JSON call per op via COMAddIn.Object.")
+    lines.append("- **csharp-addin**: C# COM add-in (in-process, early-bound interop), one JSON call per op.")
     lines.append("- `B0 Open` is N/A for the empty tier (no file to open).")
 
     report_md = "\n".join(lines)
@@ -348,7 +518,7 @@ def main():
     parser = argparse.ArgumentParser(description="Excel Automation Benchmark")
     parser.add_argument("--all", action="store_true", help="Run all available backends")
     parser.add_argument("--backends", default="pywin32,vba",
-                        help="Comma-separated backends (pywin32,vba)")
+                        help="Comma-separated backends (pywin32,vba,pyaddin,csharp-addin)")
     parser.add_argument("--size", default="empty",
                         help="Comma-separated document sizes (empty,medium,large)")
     parser.add_argument("--headed", action="store_true", help="Show Excel window")
@@ -357,7 +527,7 @@ def main():
     parser.add_argument("--rounds", type=int, default=3, help="Measurement rounds (default 3)")
     args = parser.parse_args()
 
-    backends_to_run = ["pywin32", "vba"] if args.all \
+    backends_to_run = list(ALL_BACKENDS) if args.all \
         else [b.strip() for b in args.backends.split(",") if b.strip()]
     sizes = [s.strip() for s in args.size.split(",") if s.strip()]
 
@@ -378,7 +548,7 @@ def main():
         for bname in backends_to_run:
             print(f"{'='*60}\n  {size} / {bname}\n{'='*60}")
 
-            if bname not in PERSISTENT_BACKENDS:
+            if bname not in PERSISTENT_BACKENDS and bname not in ADDIN_BACKENDS:
                 print(f"  [skip] Unknown backend: {bname}")
                 continue
 
@@ -388,8 +558,12 @@ def main():
                 label = f"warmup {r+1}" if is_warmup else f"round {r+1-args.warmup}"
                 print(f"  [{bname}] {label}...", end=" ", flush=True)
                 try:
-                    backend = COMBackend(bname, visible=args.headed)
-                    result = run_benchmark_com(backend, workdir, size)
+                    if bname in PERSISTENT_BACKENDS:
+                        backend = COMBackend(bname, visible=args.headed)
+                        result = run_benchmark_com(backend, workdir, size)
+                    else:
+                        backend = AddinBackend(bname, visible=args.headed)
+                        result = run_benchmark_addin(backend, workdir, size)
                     print("done")
                     if not is_warmup:
                         round_results.append(result)
