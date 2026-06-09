@@ -141,6 +141,8 @@ public class ExcelScript
         return null;
     }
 }";
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
             var provider = new CSharpCodeProvider();
             var parameters = new CompilerParameters();
             parameters.GenerateInMemory = true;
@@ -156,6 +158,7 @@ public class ExcelScript
 
             if (results.Errors.HasErrors)
             {
+                sw.Stop();
                 var sb = new StringBuilder();
                 foreach (CompilerError err in results.Errors)
                 {
@@ -166,6 +169,7 @@ public class ExcelScript
                 errResult.Add("ok", false);
                 errResult.Add("error", "Compilation failed");
                 errResult.Add("details", sb.ToString());
+                errResult.Add("elapsed_ms", sw.ElapsedMilliseconds);
                 return JsonConvert.SerializeObject(errResult);
             }
 
@@ -175,26 +179,32 @@ public class ExcelScript
                 Type scriptType = assembly.GetType("ExcelScript");
                 MethodInfo method = scriptType.GetMethod("Execute");
                 object result = method.Invoke(null, new object[] { _app, wb, ws });
+                sw.Stop();
                 var okResult = new Dictionary<string, object>();
                 okResult.Add("ok", true);
                 okResult.Add("result", result != null ? result.ToString() : null);
+                okResult.Add("elapsed_ms", sw.ElapsedMilliseconds);
                 return JsonConvert.SerializeObject(okResult);
             }
             catch (TargetInvocationException ex)
             {
+                sw.Stop();
                 Exception inner = ex.InnerException != null ? ex.InnerException : ex;
                 var errResult = new Dictionary<string, object>();
                 errResult.Add("ok", false);
                 errResult.Add("error", inner.Message);
                 errResult.Add("traceback", inner.StackTrace);
+                errResult.Add("elapsed_ms", sw.ElapsedMilliseconds);
                 return JsonConvert.SerializeObject(errResult);
             }
             catch (Exception ex)
             {
+                sw.Stop();
                 var errResult = new Dictionary<string, object>();
                 errResult.Add("ok", false);
                 errResult.Add("error", ex.Message);
                 errResult.Add("traceback", ex.StackTrace);
+                errResult.Add("elapsed_ms", sw.ElapsedMilliseconds);
                 return JsonConvert.SerializeObject(errResult);
             }
         }

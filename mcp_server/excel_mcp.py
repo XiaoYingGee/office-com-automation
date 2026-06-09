@@ -85,17 +85,21 @@ def excel_open(path: str, create: bool = False) -> str:
         path: File path (.xlsx). Relative paths resolved from CWD.
         create: If True, create a new workbook at path. Otherwise open existing.
 
-    Returns: JSON {"ok": true, "path": "...", "sheets": [...]}
+    Returns: JSON {"ok": true, "path": "...", "sheets": [...], "elapsed_ms": ...}
     """
+    import time
     excel = _get_excel()
     try:
+        t0 = time.perf_counter()
         if create:
             excel.create(path)
         else:
             excel.open(path)
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
         info = excel.inspect()
         return json.dumps({"ok": True, "path": excel.filepath,
-                          "sheets": [s["name"] for s in info["sheets"]]},
+                          "sheets": [s["name"] for s in info["sheets"]],
+                          "elapsed_ms": elapsed_ms},
                          ensure_ascii=False)
     except Exception as e:
         return json.dumps({"ok": False, "error": str(e)})
@@ -108,12 +112,15 @@ def excel_save(path: str = None) -> str:
     Args:
         path: If provided, SaveAs to this path. Otherwise save in-place.
 
-    Returns: JSON {"ok": true}
+    Returns: JSON {"ok": true, "elapsed_ms": ...}
     """
+    import time
     try:
         excel = _ensure_workbook()
+        t0 = time.perf_counter()
         excel.save(path)
-        return json.dumps({"ok": True})
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+        return json.dumps({"ok": True, "elapsed_ms": elapsed_ms})
     except Exception as e:
         return json.dumps({"ok": False, "error": str(e)})
 
@@ -190,6 +197,7 @@ def excel_execute_code(code: str) -> str:
 
     Returns: JSON {"ok": true, "result": ...} or {"ok": false, "error": "...", "traceback": "..."}
     """
+    import time
     try:
         excel = _ensure_workbook()
         local_vars = {
@@ -200,8 +208,11 @@ def excel_execute_code(code: str) -> str:
             "json": json,
             "os": os,
         }
+        t0 = time.perf_counter()
         exec(code, {"__builtins__": __builtins__}, local_vars)
-        return json.dumps({"ok": True, "result": local_vars.get("result")},
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+        return json.dumps({"ok": True, "result": local_vars.get("result"),
+                          "elapsed_ms": elapsed_ms},
                          ensure_ascii=False, default=str)
     except Exception as e:
         return json.dumps({"ok": False, "error": str(e),
