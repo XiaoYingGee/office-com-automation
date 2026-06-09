@@ -17,11 +17,19 @@ public static class Ops
         {
             "cell.write"        => CellWrite(req),
             "range.write_bulk"  => RangeWriteBulk(req),
+            "range.read"        => RangeRead(req),
             "range.clear"       => RangeClear(req),
             "range.copy_values" => RangeCopyValues(req),
+            "inspect"           => Inspect(req),
+            "set_format"        => SetFormat(req),
+            "row.insert"        => RowInsert(req),
+            "row.delete"        => RowDelete(req),
+            "sheet.add"         => SheetAdd(req),
+            "sheet.rename"      => SheetRename(req),
+            "sheet.delete"      => SheetDelete(req),
             _ => throw new OpException(ErrorCategory.Unknown,
                 $"unknown op: {req.Op}",
-                hint: "supported: cell.write, range.write_bulk, range.clear, range.copy_values"),
+                hint: "supported: cell.write, range.read, range.write_bulk, range.clear, range.copy_values, inspect, set_format, row.insert, row.delete, sheet.add, sheet.rename, sheet.delete"),
         };
     }
 
@@ -299,6 +307,465 @@ public static class Ops
 
         worksheet.Save();
         return new { copied = true };
+    }
+
+    // ---------------------------------------------------------------------------
+    // range.read
+    // ---------------------------------------------------------------------------
+
+    private static object RangeRead(OpRequest req)
+    {
+        if (!File.Exists(req.Path))
+            throw new OpException(ErrorCategory.FileNotFound, $"File not found: {req.Path}");
+
+        string? rangeAddr = req.Target?.Range;
+        if (string.IsNullOrWhiteSpace(rangeAddr))
+            throw new OpException(ErrorCategory.InvalidArg, "range.read requires target.range");
+
+        string property = "value2";
+        if (req.Params.ValueKind != JsonValueKind.Undefined &&
+            req.Params.ValueKind != JsonValueKind.Null &&
+            req.Params.TryGetProperty("property", out var propEl) &&
+            propEl.ValueKind == JsonValueKind.String)
+        {
+            property = propEl.GetString()!;
+        }
+
+        using var doc = SpreadsheetDocument.Open(req.Path, isEditable: false);
+        var workbookPart = doc.WorkbookPart
+            ?? throw new OpException(ErrorCategory.Unknown, "Workbook part missing");
+        WorksheetPart worksheetPart = ResolveWorksheetPart(workbookPart, req.Target?.Sheet);
+        var sheetData = worksheetPart.Worksheet.GetFirstChild<SheetData>();
+
+        var (col, row) = A1.Parse(rangeAddr);
+        string normRef = A1.ToA1(col, row);
+
+        Cell? cell = null;
+        if (sheetData is not null)
+        {
+            foreach (var r in sheetData.Elements<Row>())
+            {
+                if (r.RowIndex?.Value != (uint)row) continue;
+                foreach (var c in r.Elements<Cell>())
+                {
+                    if (string.Equals(c.CellReference?.Value, normRef, StringComparison.OrdinalIgnoreCase))
+                    { cell = c; break; }
+                }
+                break;
+            }
+        }
+
+        if (cell is null)
+            return new { kind = "empty", value = (object?)null };
+
+        if (property == "formula")
+        {
+            var formula = cell.GetFirstChild<CellFormula>();
+            if (formula is not null)
+                return new { kind = "string", value = (object?)("=" + formula.Text) };
+        }
+
+        return ReadCellValue(cell, workbookPart);
+    }
+
+    private static object ReadCellValue(Cell cell, WorkbookPart workbookPart)
+    {
+        var dataType = cell.DataType?.Value;
+
+        if (dataType == CellValues.InlineString)
+        {
+            string? text = cell.GetFirstChild<InlineString>()?.GetFirstChild<Text>()?.Text;
+            return new { kind = "string", value = (object?)(text ?? "") };
+        }
+        if (dataType == CellValues.SharedString)
+        {
+            string? idx = cell.CellValue?.Text;
+            string resolved = "";
+            if (idx is not null && int.TryParse(idx, out int i))
+            {
+                var sst = workbookPart.SharedStringTablePart?.SharedStringTable;
+                resolved = sst?.Elements<SharedStringItem>().ElementAtOrDefault(i)?.InnerText ?? "";
+            }
+            return new { kind = "string", value = (object?)resolved };
+        }
+        if (dataType == CellValues.Boolean)
+        {
+            bool bv = cell.CellValue?.Text == "1";
+            return new { kind = "bool", value = (object?)bv };
+        }
+
+        string? raw = cell.CellValue?.Text;
+        if (raw is not null && double.TryParse(raw, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out double dv))
+        {
+            return new { kind = "number", value = (object?)dv };
+        }
+
+        if (raw is null)
+            return new { kind = "empty", value = (object?)null };
+
+        return new { kind = "string", value = (object?)raw };
+    }
+
+    // ---------------------------------------------------------------------------
+    // inspect
+    // ---------------------------------------------------------------------------
+
+    private static object Inspect(OpRequest req)
+    {
+        if (!File.Exists(req.Path))
+            throw new OpException(ErrorCategory.FileNotFound, $"File not found: {req.Path}");
+
+        using var doc = SpreadsheetDocument.Open(req.Path, isEditable: false);
+        var workbookPart = doc.WorkbookPart
+            ?? throw new OpException(ErrorCategory.Unknown, "Workbook part missing");
+        var sheets = workbookPart.Workbook.GetFirstChild<Sheets>();
+        if (sheets is null)
+            return new { sheets = Array.Empty<object>() };
+
+        var result = new List<object>();
+        int idx = 0;
+        foreach (var s in sheets.Elements<Sheet>())
+        {
+            idx++;
+            string name = s.Name?.Value ?? "";
+            int rows = 0, cols = 0;
+            string usedRange = "";
+
+            string? relId = s.Id?.Value;
+            if (relId is not null && workbookPart.GetPartById(relId) is WorksheetPart wsp)
+            {
+                var sheetData = wsp.Worksheet.GetFirstChild<SheetData>();
+                if (sheetData is not null)
+                {
+                    int minRow = int.MaxValue, maxRow = 0, minCol = int.MaxValue, maxCol = 0;
+                    foreach (var row in sheetData.Elements<Row>())
+                    {
+                        int ri = (int)(row.RowIndex?.Value ?? 0);
+                        if (ri < minRow) minRow = ri;
+                        if (ri > maxRow) maxRow = ri;
+                        foreach (var cell in row.Elements<Cell>())
+                        {
+                            string? cr = cell.CellReference?.Value;
+                            if (cr is null) continue;
+                            try { var (c, _) = A1.Parse(cr); if (c < minCol) minCol = c; if (c > maxCol) maxCol = c; }
+                            catch { }
+                        }
+                    }
+                    if (maxRow > 0)
+                    {
+                        rows = maxRow - minRow + 1;
+                        cols = maxCol - minCol + 1;
+                        usedRange = $"{A1.ToA1(minCol, minRow)}:{A1.ToA1(maxCol, maxRow)}";
+                    }
+                }
+            }
+
+            result.Add(new { index = idx, name, used_range = usedRange, rows, cols });
+        }
+
+        return new { sheets = result };
+    }
+
+    // ---------------------------------------------------------------------------
+    // set_format
+    // ---------------------------------------------------------------------------
+
+    private static object SetFormat(OpRequest req)
+    {
+        if (!File.Exists(req.Path))
+            throw new OpException(ErrorCategory.FileNotFound, $"File not found: {req.Path}");
+
+        string? rangeAddr = req.Target?.Range;
+        if (string.IsNullOrWhiteSpace(rangeAddr))
+            throw new OpException(ErrorCategory.InvalidArg, "set_format requires target.range");
+
+        ValidateSaveAsFormat(req);
+        using var doc = OpenDocument(req);
+        var workbookPart = doc.WorkbookPart
+            ?? throw new OpException(ErrorCategory.Unknown, "Workbook part missing");
+        WorksheetPart worksheetPart = ResolveWorksheetPart(workbookPart, req.Target?.Sheet);
+        Worksheet worksheet = worksheetPart.Worksheet;
+
+        var stylesPart = workbookPart.WorkbookStylesPart;
+        if (stylesPart is null)
+        {
+            stylesPart = workbookPart.AddNewPart<WorkbookStylesPart>();
+            stylesPart.Stylesheet = new Stylesheet(
+                new Fonts(new Font()),
+                new Fills(new Fill(new PatternFill { PatternType = PatternValues.None }),
+                          new Fill(new PatternFill { PatternType = PatternValues.Gray125 })),
+                new Borders(new Border()),
+                new CellFormats(new CellFormat())
+            );
+            stylesPart.Stylesheet.Save();
+        }
+        var stylesheet = stylesPart.Stylesheet;
+
+        bool? bold = null;
+        double? fontSize = null;
+        string? bgColorHex = null;
+
+        if (req.Params.ValueKind != JsonValueKind.Undefined && req.Params.ValueKind != JsonValueKind.Null)
+        {
+            if (req.Params.TryGetProperty("bold", out var bEl) && (bEl.ValueKind == JsonValueKind.True || bEl.ValueKind == JsonValueKind.False))
+                bold = bEl.GetBoolean();
+            if (req.Params.TryGetProperty("font_size", out var fsEl) && fsEl.ValueKind == JsonValueKind.Number)
+                fontSize = fsEl.GetDouble();
+            if (req.Params.TryGetProperty("bg_color", out var bgEl) && bgEl.ValueKind == JsonValueKind.Number)
+                bgColorHex = bgEl.GetInt64().ToString("X6");
+        }
+
+        var fonts = stylesheet.Fonts ?? stylesheet.AppendChild(new Fonts(new Font()));
+        var fills = stylesheet.Fills ?? stylesheet.AppendChild(new Fills(
+            new Fill(new PatternFill { PatternType = PatternValues.None }),
+            new Fill(new PatternFill { PatternType = PatternValues.Gray125 })));
+        var cellFormats = stylesheet.CellFormats ?? stylesheet.AppendChild(new CellFormats(new CellFormat()));
+
+        var newFont = new Font();
+        if (bold == true) newFont.AppendChild(new Bold());
+        if (fontSize.HasValue) newFont.AppendChild(new FontSize { Val = fontSize.Value });
+        fonts.AppendChild(newFont);
+        uint fontId = (uint)(fonts.Count ?? 1) - 1;
+
+        uint fillId = 0;
+        if (bgColorHex is not null)
+        {
+            var newFill = new Fill(new PatternFill(new ForegroundColor { Rgb = new HexBinaryValue(bgColorHex) })
+                { PatternType = PatternValues.Solid });
+            fills.AppendChild(newFill);
+            fillId = (uint)(fills.Count ?? 1) - 1;
+        }
+
+        var newCellFormat = new CellFormat { FontId = fontId, FillId = fillId, ApplyFont = true };
+        if (fillId > 0) newCellFormat.ApplyFill = true;
+        cellFormats.AppendChild(newCellFormat);
+        uint styleIndex = (uint)(cellFormats.Count ?? 1) - 1;
+
+        stylesheet.Save();
+
+        foreach (string cellRef in EnumerateRangeCells(rangeAddr))
+        {
+            Cell cell = A1.EnsureCell(worksheet, cellRef);
+            cell.StyleIndex = styleIndex;
+        }
+
+        worksheet.Save();
+        return new { formatted = true };
+    }
+
+    // ---------------------------------------------------------------------------
+    // row.insert
+    // ---------------------------------------------------------------------------
+
+    private static object RowInsert(OpRequest req)
+    {
+        if (!File.Exists(req.Path))
+            throw new OpException(ErrorCategory.FileNotFound, $"File not found: {req.Path}");
+
+        int row = 1, count = 1;
+        if (req.Params.ValueKind != JsonValueKind.Undefined && req.Params.ValueKind != JsonValueKind.Null)
+        {
+            if (req.Params.TryGetProperty("row", out var rEl) && rEl.ValueKind == JsonValueKind.Number)
+                row = rEl.GetInt32();
+            if (req.Params.TryGetProperty("count", out var cEl) && cEl.ValueKind == JsonValueKind.Number)
+                count = cEl.GetInt32();
+        }
+
+        ValidateSaveAsFormat(req);
+        using var doc = OpenDocument(req);
+        var workbookPart = doc.WorkbookPart
+            ?? throw new OpException(ErrorCategory.Unknown, "Workbook part missing");
+        WorksheetPart worksheetPart = ResolveWorksheetPart(workbookPart, req.Target?.Sheet);
+        var sheetData = worksheetPart.Worksheet.GetFirstChild<SheetData>();
+        if (sheetData is null) { worksheetPart.Worksheet.Save(); return new { inserted = true, row, count }; }
+
+        foreach (var r in sheetData.Elements<Row>().ToList())
+        {
+            uint ri = r.RowIndex?.Value ?? 0;
+            if (ri >= (uint)row)
+            {
+                r.RowIndex = ri + (uint)count;
+                foreach (var c in r.Elements<Cell>())
+                {
+                    string? cr = c.CellReference?.Value;
+                    if (cr is null) continue;
+                    var (col, _) = A1.Parse(cr);
+                    c.CellReference = A1.ToA1(col, (int)(ri + (uint)count));
+                }
+            }
+        }
+
+        worksheetPart.Worksheet.Save();
+        return new { inserted = true, row, count };
+    }
+
+    // ---------------------------------------------------------------------------
+    // row.delete
+    // ---------------------------------------------------------------------------
+
+    private static object RowDelete(OpRequest req)
+    {
+        if (!File.Exists(req.Path))
+            throw new OpException(ErrorCategory.FileNotFound, $"File not found: {req.Path}");
+
+        int row = 1, count = 1;
+        if (req.Params.ValueKind != JsonValueKind.Undefined && req.Params.ValueKind != JsonValueKind.Null)
+        {
+            if (req.Params.TryGetProperty("row", out var rEl) && rEl.ValueKind == JsonValueKind.Number)
+                row = rEl.GetInt32();
+            if (req.Params.TryGetProperty("count", out var cEl) && cEl.ValueKind == JsonValueKind.Number)
+                count = cEl.GetInt32();
+        }
+
+        ValidateSaveAsFormat(req);
+        using var doc = OpenDocument(req);
+        var workbookPart = doc.WorkbookPart
+            ?? throw new OpException(ErrorCategory.Unknown, "Workbook part missing");
+        WorksheetPart worksheetPart = ResolveWorksheetPart(workbookPart, req.Target?.Sheet);
+        var sheetData = worksheetPart.Worksheet.GetFirstChild<SheetData>();
+        if (sheetData is null) { worksheetPart.Worksheet.Save(); return new { deleted = true, row, count }; }
+
+        var rowsToRemove = sheetData.Elements<Row>()
+            .Where(r => r.RowIndex?.Value >= (uint)row && r.RowIndex?.Value < (uint)(row + count))
+            .ToList();
+        foreach (var r in rowsToRemove) sheetData.RemoveChild(r);
+
+        foreach (var r in sheetData.Elements<Row>().ToList())
+        {
+            uint ri = r.RowIndex?.Value ?? 0;
+            if (ri > (uint)row)
+            {
+                r.RowIndex = ri - (uint)count;
+                foreach (var c in r.Elements<Cell>())
+                {
+                    string? cr = c.CellReference?.Value;
+                    if (cr is null) continue;
+                    var (col, _) = A1.Parse(cr);
+                    c.CellReference = A1.ToA1(col, (int)(ri - (uint)count));
+                }
+            }
+        }
+
+        worksheetPart.Worksheet.Save();
+        return new { deleted = true, row, count };
+    }
+
+    // ---------------------------------------------------------------------------
+    // sheet.add
+    // ---------------------------------------------------------------------------
+
+    private static object SheetAdd(OpRequest req)
+    {
+        string? name = null;
+        if (req.Params.ValueKind != JsonValueKind.Undefined && req.Params.ValueKind != JsonValueKind.Null &&
+            req.Params.TryGetProperty("name", out var nEl) && nEl.ValueKind == JsonValueKind.String)
+            name = nEl.GetString();
+
+        ValidateSaveAsFormat(req);
+        using var doc = OpenOrCreate(req);
+        var workbookPart = doc.WorkbookPart
+            ?? throw new OpException(ErrorCategory.Unknown, "Workbook part missing");
+
+        var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
+        worksheetPart.Worksheet = new Worksheet(new SheetData());
+
+        var sheets = workbookPart.Workbook.GetFirstChild<Sheets>()
+            ?? workbookPart.Workbook.AppendChild(new Sheets());
+
+        uint maxId = 0;
+        foreach (var s in sheets.Elements<Sheet>())
+            if (s.SheetId?.Value > maxId) maxId = s.SheetId.Value;
+
+        string sheetName = name ?? $"Sheet{maxId + 2}";
+        sheets.AppendChild(new Sheet
+        {
+            Id = workbookPart.GetIdOfPart(worksheetPart),
+            SheetId = maxId + 1,
+            Name = sheetName,
+        });
+
+        workbookPart.Workbook.Save();
+        return new { added = true, name = sheetName };
+    }
+
+    // ---------------------------------------------------------------------------
+    // sheet.rename
+    // ---------------------------------------------------------------------------
+
+    private static object SheetRename(OpRequest req)
+    {
+        if (!File.Exists(req.Path))
+            throw new OpException(ErrorCategory.FileNotFound, $"File not found: {req.Path}");
+
+        string? sheetName = req.Target?.Sheet;
+        if (string.IsNullOrWhiteSpace(sheetName))
+            throw new OpException(ErrorCategory.InvalidArg, "sheet.rename requires target.sheet");
+
+        string? newName = null;
+        if (req.Params.ValueKind != JsonValueKind.Undefined && req.Params.ValueKind != JsonValueKind.Null &&
+            req.Params.TryGetProperty("name", out var nEl) && nEl.ValueKind == JsonValueKind.String)
+            newName = nEl.GetString();
+        if (string.IsNullOrWhiteSpace(newName))
+            throw new OpException(ErrorCategory.InvalidArg, "sheet.rename requires params.name");
+
+        ValidateSaveAsFormat(req);
+        using var doc = OpenDocument(req);
+        var workbookPart = doc.WorkbookPart
+            ?? throw new OpException(ErrorCategory.Unknown, "Workbook part missing");
+        var sheets = workbookPart.Workbook.GetFirstChild<Sheets>();
+        if (sheets is null)
+            throw new OpException(ErrorCategory.SheetNotFound, "No sheets in workbook");
+
+        Sheet? target = null;
+        foreach (var s in sheets.Elements<Sheet>())
+            if (string.Equals(s.Name?.Value, sheetName, StringComparison.Ordinal))
+            { target = s; break; }
+
+        if (target is null)
+            throw new OpException(ErrorCategory.SheetNotFound, $"Sheet not found: {sheetName}");
+
+        target.Name = newName;
+        workbookPart.Workbook.Save();
+        return new { renamed = true, old_name = sheetName, new_name = newName };
+    }
+
+    // ---------------------------------------------------------------------------
+    // sheet.delete
+    // ---------------------------------------------------------------------------
+
+    private static object SheetDelete(OpRequest req)
+    {
+        if (!File.Exists(req.Path))
+            throw new OpException(ErrorCategory.FileNotFound, $"File not found: {req.Path}");
+
+        string? sheetName = req.Target?.Sheet;
+        if (string.IsNullOrWhiteSpace(sheetName))
+            throw new OpException(ErrorCategory.InvalidArg, "sheet.delete requires target.sheet");
+
+        ValidateSaveAsFormat(req);
+        using var doc = OpenDocument(req);
+        var workbookPart = doc.WorkbookPart
+            ?? throw new OpException(ErrorCategory.Unknown, "Workbook part missing");
+        var sheets = workbookPart.Workbook.GetFirstChild<Sheets>();
+        if (sheets is null)
+            throw new OpException(ErrorCategory.SheetNotFound, "No sheets in workbook");
+
+        Sheet? target = null;
+        foreach (var s in sheets.Elements<Sheet>())
+            if (string.Equals(s.Name?.Value, sheetName, StringComparison.Ordinal))
+            { target = s; break; }
+
+        if (target is null)
+            throw new OpException(ErrorCategory.SheetNotFound, $"Sheet not found: {sheetName}");
+
+        string? relId = target.Id?.Value;
+        sheets.RemoveChild(target);
+        if (relId is not null)
+            workbookPart.DeletePart(relId);
+
+        workbookPart.Workbook.Save();
+        return new { deleted = true, name = sheetName };
     }
 
     // ---------------------------------------------------------------------------

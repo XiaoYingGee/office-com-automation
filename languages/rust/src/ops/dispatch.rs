@@ -413,34 +413,249 @@ fn range_copy_values(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
 }
 
 // ---------------------------------------------------------------------------
+// inspect
+// ---------------------------------------------------------------------------
+fn inspect(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
+    if !std::path::Path::new(&req.path).exists() {
+        return Err(excel_err(ErrorCategory::FileNotFound, format!("file not found: {}", req.path)));
+    }
+
+    let excel = ExcelApp::new().map_err(|e| map_com_error(&e))?;
+    let native_path = win_path(&req.path);
+    let wb = excel.open_workbook(&native_path).map_err(|e| map_com_error(&e))?;
+
+    let sheets_coll = wb.get_dispatch("Worksheets").map_err(|e| map_com_error(&e))?;
+    let count = sheets_coll.get("Count").map_err(|e| map_com_error(&e))?.as_f64().unwrap_or(0.0) as i32;
+
+    let mut sheets = Vec::new();
+    for i in 1..=count {
+        let ws = excel.get_sheet(&wb, i).map_err(|e| map_com_error(&e))?;
+        let name = ws.get("Name").map_err(|e| map_com_error(&e))?;
+        let name_str = match name { Variant::Bstr(s) => s, _ => String::new() };
+
+        let used = ws.get_dispatch("UsedRange").map_err(|e| map_com_error(&e))?;
+        let addr = used.get("Address").map_err(|e| map_com_error(&e))?;
+        let addr_str = match addr { Variant::Bstr(s) => s, _ => String::new() };
+        let rows = used.get_dispatch("Rows").map_err(|e| map_com_error(&e))?
+            .get("Count").map_err(|e| map_com_error(&e))?.as_f64().unwrap_or(0.0) as i32;
+        let cols = used.get_dispatch("Columns").map_err(|e| map_com_error(&e))?
+            .get("Count").map_err(|e| map_com_error(&e))?.as_f64().unwrap_or(0.0) as i32;
+
+        sheets.push(json!({
+            "index": i,
+            "name": name_str,
+            "used_range": addr_str,
+            "rows": rows,
+            "cols": cols,
+        }));
+    }
+
+    wb.call("Close", &[vbool(false)]).map_err(|e| map_com_error(&e))?;
+    Ok(json!({"sheets": sheets}))
+}
+
+// ---------------------------------------------------------------------------
+// set_format
+// ---------------------------------------------------------------------------
+fn set_format(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
+    let range_addr = req.target.as_ref()
+        .and_then(|t| t.range.as_deref())
+        .ok_or_else(|| excel_err(ErrorCategory::InvalidArg, "set_format requires target.range"))?;
+    let sheet_name = req.target.as_ref().and_then(|t| t.sheet.clone());
+
+    if !std::path::Path::new(&req.path).exists() {
+        return Err(excel_err(ErrorCategory::FileNotFound, format!("file not found: {}", req.path)));
+    }
+
+    let excel = ExcelApp::new().map_err(|e| map_com_error(&e))?;
+    let native_path = win_path(&req.path);
+    let wb = excel.open_workbook(&native_path).map_err(|e| map_com_error(&e))?;
+    let ws = resolve_sheet_write(&excel, &wb, &sheet_name)?;
+    let rng = excel.get_range(&ws, range_addr).map_err(|e| map_com_error(&e))?;
+
+    if let Some(v) = req.params.get("bold").and_then(|v| v.as_bool()) {
+        let font = rng.get_dispatch("Font").map_err(|e| map_com_error(&e))?;
+        font.put("Bold", Variant::Bool(v)).map_err(|e| map_com_error(&e))?;
+    }
+    if let Some(v) = req.params.get("italic").and_then(|v| v.as_bool()) {
+        let font = rng.get_dispatch("Font").map_err(|e| map_com_error(&e))?;
+        font.put("Italic", Variant::Bool(v)).map_err(|e| map_com_error(&e))?;
+    }
+    if let Some(v) = req.params.get("font_size").and_then(|v| v.as_f64()) {
+        let font = rng.get_dispatch("Font").map_err(|e| map_com_error(&e))?;
+        font.put("Size", Variant::R8(v)).map_err(|e| map_com_error(&e))?;
+    }
+    if let Some(v) = req.params.get("font_name").and_then(|v| v.as_str()) {
+        let font = rng.get_dispatch("Font").map_err(|e| map_com_error(&e))?;
+        font.put("Name", Variant::Bstr(v.to_string())).map_err(|e| map_com_error(&e))?;
+    }
+    if let Some(v) = req.params.get("font_color").and_then(|v| v.as_i64()) {
+        let font = rng.get_dispatch("Font").map_err(|e| map_com_error(&e))?;
+        font.put("Color", Variant::I4(v as i32)).map_err(|e| map_com_error(&e))?;
+    }
+    if let Some(v) = req.params.get("bg_color").and_then(|v| v.as_i64()) {
+        let interior = rng.get_dispatch("Interior").map_err(|e| map_com_error(&e))?;
+        interior.put("Color", Variant::I4(v as i32)).map_err(|e| map_com_error(&e))?;
+    }
+    if let Some(v) = req.params.get("number_format").and_then(|v| v.as_str()) {
+        rng.put("NumberFormat", Variant::Bstr(v.to_string())).map_err(|e| map_com_error(&e))?;
+    }
+
+    save_and_close(&wb, &req)?;
+    Ok(json!({"formatted": true}))
+}
+
+// ---------------------------------------------------------------------------
+// row.insert
+// ---------------------------------------------------------------------------
+fn row_insert(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
+    let sheet_name = req.target.as_ref().and_then(|t| t.sheet.clone());
+    let row = req.params.get("row").and_then(|v| v.as_i64())
+        .ok_or_else(|| excel_err(ErrorCategory::InvalidArg, "row.insert requires params.row"))? as i32;
+    let count = req.params.get("count").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+
+    if !std::path::Path::new(&req.path).exists() {
+        return Err(excel_err(ErrorCategory::FileNotFound, format!("file not found: {}", req.path)));
+    }
+
+    let excel = ExcelApp::new().map_err(|e| map_com_error(&e))?;
+    let native_path = win_path(&req.path);
+    let wb = excel.open_workbook(&native_path).map_err(|e| map_com_error(&e))?;
+    let ws = resolve_sheet_write(&excel, &wb, &sheet_name)?;
+
+    let rows_coll = ws.get_dispatch("Rows").map_err(|e| map_com_error(&e))?;
+    for _ in 0..count {
+        let row_obj = rows_coll.get_dispatch_with_args("Item", &[i4(row)]).map_err(|e| map_com_error(&e))?;
+        row_obj.call("Insert", &[]).map_err(|e| map_com_error(&e))?;
+    }
+
+    save_and_close(&wb, &req)?;
+    Ok(json!({"inserted": true, "row": row, "count": count}))
+}
+
+// ---------------------------------------------------------------------------
+// row.delete
+// ---------------------------------------------------------------------------
+fn row_delete(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
+    let sheet_name = req.target.as_ref().and_then(|t| t.sheet.clone());
+    let row = req.params.get("row").and_then(|v| v.as_i64())
+        .ok_or_else(|| excel_err(ErrorCategory::InvalidArg, "row.delete requires params.row"))? as i32;
+    let count = req.params.get("count").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+
+    if !std::path::Path::new(&req.path).exists() {
+        return Err(excel_err(ErrorCategory::FileNotFound, format!("file not found: {}", req.path)));
+    }
+
+    let excel = ExcelApp::new().map_err(|e| map_com_error(&e))?;
+    let native_path = win_path(&req.path);
+    let wb = excel.open_workbook(&native_path).map_err(|e| map_com_error(&e))?;
+    let ws = resolve_sheet_write(&excel, &wb, &sheet_name)?;
+
+    let addr = format!("{}:{}", row, row + count - 1);
+    let rows_rng = ws.get_dispatch_with_args("Rows", &[bstr(&addr)]).map_err(|e| map_com_error(&e))?;
+    rows_rng.call("Delete", &[]).map_err(|e| map_com_error(&e))?;
+
+    save_and_close(&wb, &req)?;
+    Ok(json!({"deleted": true, "row": row, "count": count}))
+}
+
+// ---------------------------------------------------------------------------
+// sheet.add
+// ---------------------------------------------------------------------------
+fn sheet_add(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
+    let name = req.params.get("name").and_then(|v| v.as_str());
+
+    let excel = ExcelApp::new().map_err(|e| map_com_error(&e))?;
+    let native_path = win_path(&req.path);
+    let wb = excel.open_or_create(&native_path).map_err(|e| map_com_error(&e))?;
+
+    let new_ws = excel.add_sheet(&wb).map_err(|e| map_com_error(&e))?;
+    if let Some(n) = name {
+        new_ws.put("Name", Variant::Bstr(n.to_string())).map_err(|e| map_com_error(&e))?;
+    }
+    let actual_name = new_ws.get("Name").map_err(|e| map_com_error(&e))?;
+    let name_str = match actual_name { Variant::Bstr(s) => s, _ => String::new() };
+
+    save_and_close(&wb, &req)?;
+    Ok(json!({"added": true, "name": name_str}))
+}
+
+// ---------------------------------------------------------------------------
+// sheet.rename
+// ---------------------------------------------------------------------------
+fn sheet_rename(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
+    let sheet_name = req.target.as_ref().and_then(|t| t.sheet.clone())
+        .ok_or_else(|| excel_err(ErrorCategory::InvalidArg, "sheet.rename requires target.sheet"))?;
+    let new_name = req.params.get("name").and_then(|v| v.as_str())
+        .ok_or_else(|| excel_err(ErrorCategory::InvalidArg, "sheet.rename requires params.name"))?;
+
+    if !std::path::Path::new(&req.path).exists() {
+        return Err(excel_err(ErrorCategory::FileNotFound, format!("file not found: {}", req.path)));
+    }
+
+    let excel = ExcelApp::new().map_err(|e| map_com_error(&e))?;
+    let native_path = win_path(&req.path);
+    let wb = excel.open_workbook(&native_path).map_err(|e| map_com_error(&e))?;
+
+    let ws = excel.get_sheet_by_name(&wb, &sheet_name).map_err(|_| {
+        excel_err(ErrorCategory::SheetNotFound, format!("sheet not found: {sheet_name}"))
+    })?;
+    ws.put("Name", Variant::Bstr(new_name.to_string())).map_err(|e| map_com_error(&e))?;
+
+    save_and_close(&wb, &req)?;
+    Ok(json!({"renamed": true, "old_name": sheet_name, "new_name": new_name}))
+}
+
+// ---------------------------------------------------------------------------
+// sheet.delete
+// ---------------------------------------------------------------------------
+fn sheet_delete(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
+    let sheet_name = req.target.as_ref().and_then(|t| t.sheet.clone())
+        .ok_or_else(|| excel_err(ErrorCategory::InvalidArg, "sheet.delete requires target.sheet"))?;
+
+    if !std::path::Path::new(&req.path).exists() {
+        return Err(excel_err(ErrorCategory::FileNotFound, format!("file not found: {}", req.path)));
+    }
+
+    let excel = ExcelApp::new().map_err(|e| map_com_error(&e))?;
+    let native_path = win_path(&req.path);
+    let wb = excel.open_workbook(&native_path).map_err(|e| map_com_error(&e))?;
+
+    let ws = excel.get_sheet_by_name(&wb, &sheet_name).map_err(|_| {
+        excel_err(ErrorCategory::SheetNotFound, format!("sheet not found: {sheet_name}"))
+    })?;
+    ws.call("Delete", &[]).map_err(|e| map_com_error(&e))?;
+
+    save_and_close(&wb, &req)?;
+    Ok(json!({"deleted": true, "name": sheet_name}))
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 pub fn execute(req: OpRequest) -> OpResponse {
-    match req.op.as_str() {
-        "cell.write" => match cell_write(req) {
-            Ok(v)  => OpResponse::ok(v),
-            Err(e) => OpResponse::err(e),
-        },
-        "range.read" => match range_read(req) {
-            Ok(v)  => OpResponse::ok(v),
-            Err(e) => OpResponse::err(e),
-        },
-        "range.write_bulk" => match range_write_bulk(req) {
-            Ok(v)  => OpResponse::ok(v),
-            Err(e) => OpResponse::err(e),
-        },
-        "range.clear" => match range_clear(req) {
-            Ok(v)  => OpResponse::ok(v),
-            Err(e) => OpResponse::err(e),
-        },
-        "range.copy_values" => match range_copy_values(req) {
-            Ok(v)  => OpResponse::ok(v),
-            Err(e) => OpResponse::err(e),
-        },
-        other => OpResponse::err(excel_err_hint(
+    let op = req.op.as_str();
+    let result = match op {
+        "cell.write"        => cell_write(req),
+        "range.read"        => range_read(req),
+        "range.write_bulk"  => range_write_bulk(req),
+        "range.clear"       => range_clear(req),
+        "range.copy_values" => range_copy_values(req),
+        "inspect"           => inspect(req),
+        "set_format"        => set_format(req),
+        "row.insert"        => row_insert(req),
+        "row.delete"        => row_delete(req),
+        "sheet.add"         => sheet_add(req),
+        "sheet.rename"      => sheet_rename(req),
+        "sheet.delete"      => sheet_delete(req),
+        other => return OpResponse::err(excel_err_hint(
             ErrorCategory::Unknown,
             format!("unknown op: {other}"),
-            "supported: cell.write, range.read, range.write_bulk, range.clear, range.copy_values",
+            "supported: cell.write, range.read, range.write_bulk, range.clear, range.copy_values, inspect, set_format, row.insert, row.delete, sheet.add, sheet.rename, sheet.delete",
         )),
+    };
+    match result {
+        Ok(v)  => OpResponse::ok(v),
+        Err(e) => OpResponse::err(e),
     }
 }
