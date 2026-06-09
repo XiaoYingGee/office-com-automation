@@ -17,10 +17,11 @@
 ## 1. 前置条件
 
 - Windows + Microsoft Excel (含 VBA)
-- Python 3.10+ with `pywin32` (`pip install pywin32`)
+- Python 3.10+ with `pywin32` (`pip install pywin32`) + `openpyxl` (`pip install openpyxl`，用于生成 benchmark fixture)
 - Rust toolchain (`cargo build --release`)
-- .NET SDK 9.0+ (`dotnet build -c Release`)
-- Excel Trust Center: 勾选 "Trust access to the VBA project object model"
+- .NET SDK 10.0 (`dotnet build -c Release`，输出 `bin/Release/net10.0/`)
+- C++: MSVC (VS 2022 BuildTools，`languages/cpp/src/build.bat` 用 vcvarsall + cl 编译 → `excel-ops-cpp.exe`)
+- Excel Trust Center: 勾选 "Trust access to the VBA project object model"（注册表 `HKCU\Software\Microsoft\Office\16.0\Excel\Security\AccessVBOM = 1`）
 
 ---
 
@@ -77,78 +78,59 @@ office-com-automation/
 
 ---
 
-## 4. 统一 Op 集 (11 个)
+## 4. 统一 Op 集 (13 个)
 
-| Op | Rust (COM) | OpenXML (.NET) | pywin32 | VBA |
-|----|:---:|:---:|:---:|:---:|
-| cell.write | ✅ | ✅ | ✅ | ✅ |
-| range.write_bulk | ✅ | ✅ | ✅ | ✅ |
-| range.read | ✅ | ✅ | ✅ | ✅ |
-| range.clear | ✅ | ✅ | ✅ | ✅ |
-| range.copy_values | ✅ | ✅ | ✅ | ✅ |
-| inspect | ✅ | ✅ | ✅ | ✅ |
-| set_format | ✅ | ✅ | ✅ | ✅ |
-| row.insert | ✅ | ✅ | ✅ | ✅ |
-| row.delete | ✅ | ✅ | ✅ | ✅ |
-| sheet.add | ✅ | ✅ | ✅ | ✅ |
-| sheet.rename | ✅ | ✅ | ✅ | ✅ |
-| sheet.delete | ✅ | ✅ | ✅ | ✅ |
-
----
-
-## 5. Benchmark 9 项测试
-
-| # | 测试 | 考察点 |
-|---|------|--------|
-| B1 | Cell Write (5 cells) | 基础写入延迟 |
-| B2 | Bulk Write (100×10) | 批量写入 |
-| B3 | Read Cell | 读取延迟 |
-| B4 | Clear Range (1000 cells) | 批量清除 |
-| B5 | Inspect Workbook | 读密集(IPC差异最大) |
-| B6 | Batch 10 Writes | 多次操作累积 |
-| B7 | Format 5 Cells | 多属性设置 |
-| B8 | Insert 5 Rows | 结构操作 |
-| B9 | Sheet Add+Rename+Delete | 工作表管理 |
-
-### 实测排名 (2026-06-09, 3/4 backends)
-
-> 详见 `benchmarks/results/benchmark-results.md`。Rust 未测 (每 op spawn Excel，micro-op 套件下过慢)。
-
-| Backend | 架构 | 预期 | **实测** |
-|---------|------|:---:|:---:|
-| **VBA** | Python → App.Run(1次) → 进程内执行 | 🥇 | 🥇 (8/9 最快) |
-| **pywin32** | Python → 每属性1次跨进程COM IPC | 🥈 | 🥈 |
-| **OpenXML** | standalone exe，每 op 启动进程+整文件读写 | 🥉 | **最慢** (每 op ~300ms 固定开销) |
-| **Rust** | 无状态: 每op spawn Excel→操作→关闭 | 4th | 未测 |
-
-**⚠️ 预期修正**: OpenXML 原预测 🥉/"快速文件 I/O"，实测是所有测试里最慢的。
-原因: standalone exe **每 op** 都 *启动进程 + 读整个 .xlsx + 改 + 整文件写回*，
-~300ms 固定开销压倒"不启动 Excel"的收益。其优势仅在大批量一次性变换场景才体现，
-本 benchmark 的小粒度高频 op 反而是其最差场景。
+| Op | Rust (COM) | OpenXML (.NET) | C++ (COM) | pywin32 | VBA |
+|----|:---:|:---:|:---:|:---:|:---:|
+| cell.write | ✅ | ✅ | ✅ | ✅ | ✅ |
+| range.write_bulk | ✅ | ✅ | ✅ | ✅ | ✅ |
+| range.read | ✅ | ✅ | ✅ | ✅ | ✅ |
+| range.clear | ✅ | ✅ | ✅ | ✅ | ✅ |
+| range.merge | ✅ | ✅ | ✅ | ✅ | ✅ |
+| range.unmerge | ✅ | ✅ | ✅ | ✅ | ✅ |
+| range.copy_values | ✅ | ✅ | ✅ | ✅ | ✅ |
+| inspect | ✅ | ✅ | ✅ | ✅ | ✅ |
+| set_format | ✅ | ✅ | ✅ | ✅ | ✅ |
+| row.insert | ✅ | ✅ | ✅ | ✅ | ✅ |
+| row.delete | ✅ | ✅ | ✅ | ✅ | ✅ |
+| sheet.add | ✅ | ✅ | ✅ | ✅ | ✅ |
+| sheet.rename | ✅ | ✅ | ✅ | ✅ | ✅ |
+| sheet.delete | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ---
 
-## 6. 待验证
+## 5. Benchmark（11 项 × 3 尺寸）
 
-- [ ] Rust 新 op 编译通过
-- [ ] OpenXML set_format Stylesheet 操作正确
-- [ ] VBA 注入正常（需 Trust Center 开启）
-- [ ] Benchmark Windows 上完整跑通
-- [ ] row.insert COM dispatch 路径确认
+测试 B0–B10（含 B0 Open、B10 Merge），跨 empty / medium / large 三种文档规模。
+完整结果见根目录 `benchmark.md`。
+
+### 最终结论 (2026-06-09)
+
+最终对比聚焦两个**常驻会话**后端：**VBA 几乎全胜**，IPC 密集型差距最大
+（medium 的 Batch 36×、Merge 51×、Inspect 21×）；pywin32 仅在打开文件和首次写略快。
+大文档代价集中在**一次性打开**（large ~18.5s 开 145MB），打开后单次操作吞吐与小文档相当。
+
+**无状态后端（Rust / OpenXML / C++）已实现并验证全部 13 op，但因每 op 重开整个文件、
+比常驻后端慢 1–2 个数量级、大文档完全不可行，已从最终对比移除**（代码保留在 `languages/`）。
+详见 `benchmark.md` §6。
 
 ---
 
-## 7. 踩坑
+## 6. 踩坑
 
 - **vtMissing**: COM 可选参数必须传 `VT_ERROR`+`DISP_E_PARAMNOTFOUND`
 - **路径分隔符**: 正斜杠让 COM 失败；`win_path()` 转反斜杠
 - **OpenXML 行列排序**: 单元格必须按行升序插入
 - **VBA StringBuilder**: `SbAppend` + `Mid$` 做 O(n)
 - **VBA 引号**: 用 `Chr(34)` 避免编译器死循环
+- **C++ `GetAddress`**: `#import` 生成的签名前 3 参必填 → `GetAddress(vtMissing, vtMissing, Excel::xlA1)`
+- **C++ 工具链**: cl.exe 在 VS2022 **BuildTools**（`C:\Program Files (x86)\...\BuildTools`），不是 Enterprise；`build.bat` 经 vcvarsall 调用
+- **benchmark.py 默认路径**: 脚本在 `skills/excel-editor/scripts`，到 repo 根需 **3 层** `..`（早期 2 层 bug 把结果写进了 `skills/benchmarks/`）
+- **Bash 工具传 JSON**: 反斜杠路径会被吞 → exe 路径用正斜杠绝对路径
 
 ---
 
-## 8. 约定
+## 7. 约定
 
 - **Commit 结尾**: `Co-Authored-By: Claude Opus 4 (1M context) <noreply@anthropic.com>`
 - **流程**: 轻量（实现 + 跑测试验证）

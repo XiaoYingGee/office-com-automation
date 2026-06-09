@@ -17,13 +17,13 @@ REM Clean cached type library headers to force regeneration
 del /Q *.tlh *.tli *.obj 2>NUL
 
 echo.
-echo === Building Excel COM Automation (C++) ===
+echo === Building Excel COM Automation backend (C++) ===
 echo.
 
-cl.exe /nologo /EHsc /std:c++17 /W3 /O2 ^
+cl.exe /nologo /EHsc /std:c++17 /W3 /O2 /bigobj ^
     /DWIN32 /D_UNICODE /DUNICODE ^
-    /Fe:excel_com.exe ^
-    main.cpp tasks.cpp excel_com.cpp ^
+    /Fe:excel-ops-cpp.exe ^
+    main.cpp ops.cpp excel_com.cpp ^
     /link ole32.lib oleaut32.lib uuid.lib
 
 if %ERRORLEVEL% NEQ 0 (
@@ -34,7 +34,6 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo === BUILD SUCCEEDED ===
-echo Output: %~dp0excel_com.exe
+echo Output: %~dp0excel-ops-cpp.exe
 echo.
-echo Usage: excel_com.exe [E01] [E02] ... [E12]
-echo   No args = run all tasks
+echo Usage: one OpRequest JSON on stdin -^> one OpResponse JSON on stdout

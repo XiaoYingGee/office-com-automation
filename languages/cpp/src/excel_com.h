@@ -131,6 +131,10 @@ std::wstring VariantToWString(const _variant_t& v);
 // Extract double from _variant_t (handles VT_R8, VT_I4, VT_I2)
 double VariantToDouble(const _variant_t& v, double defaultVal = -1.0);
 
+// UTF-8 <-> UTF-16 conversion (for JSON <-> COM string marshalling)
+std::wstring Utf8ToWString(const std::string& s);
+std::string  WStringToUtf8(const std::wstring& w);
+
 // ---------------------------------------------------------------------------
 // High-resolution timer using QueryPerformanceCounter
 // ---------------------------------------------------------------------------

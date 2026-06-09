@@ -277,6 +277,18 @@ Private Function ExecuteSingleAction(ByVal actionJson As String) As String
             End If
             ExecuteSingleAction = "{" & Chr(34) & "ok" & Chr(34) & ":true," & Chr(34) & "action" & Chr(34) & ":" & JsonString(act) & "}"
 
+        Case "merge_cells"
+            Dim mrgAddr As String
+            mrgAddr = JsonExtractString(actionJson, "range")
+            ws.Range(mrgAddr).Merge
+            ExecuteSingleAction = "{" & Chr(34) & "ok" & Chr(34) & ":true," & Chr(34) & "action" & Chr(34) & ":" & JsonString(act) & "}"
+
+        Case "unmerge_cells"
+            Dim umrgAddr As String
+            umrgAddr = JsonExtractString(actionJson, "range")
+            ws.Range(umrgAddr).UnMerge
+            ExecuteSingleAction = "{" & Chr(34) & "ok" & Chr(34) & ":true," & Chr(34) & "action" & Chr(34) & ":" & JsonString(act) & "}"
+
         Case "set_format"
             Dim fmtAddr As String
             fmtAddr = JsonExtractString(actionJson, "range")

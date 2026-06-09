@@ -255,6 +255,42 @@ source value type), `ComError`.
 
 ---
 
+### `range.merge`
+
+Merge a rectangular range into a single merged cell.
+
+**Params:** none.
+
+`target.range` must be a multi-cell range (must contain `:`), e.g. `"A1:C3"`. COM backends call
+`Range.Merge(Across:=False)`; the OpenXML backend appends a `<mergeCell ref="A1:C3"/>` to the
+worksheet's `<mergeCells>` collection.
+
+**Result (ok):** `{ "merged": true }`
+
+**Error categories:** `FileNotFound` (path absent), `InvalidArg` (single-cell or missing range),
+`ComError`.
+
+**File requirement:** file must exist; returns `FileNotFound` otherwise.
+
+---
+
+### `range.unmerge`
+
+Unmerge any merged area intersecting the target range.
+
+**Params:** none.
+
+`target.range` is the address to unmerge. COM backends call `Range.UnMerge`; the OpenXML backend
+removes the matching `<mergeCell>` entry.
+
+**Result (ok):** `{ "unmerged": true }`
+
+**Error categories:** `FileNotFound` (path absent), `InvalidArg` (missing range), `ComError`.
+
+**File requirement:** file must exist; returns `FileNotFound` otherwise.
+
+---
+
 ## 7. How capctl Drives a Backend
 
 For each capability in the catalog, `capctl verify` runs the following sequence:

@@ -19,6 +19,8 @@ public static class Ops
             "range.write_bulk"  => RangeWriteBulk(req),
             "range.read"        => RangeRead(req),
             "range.clear"       => RangeClear(req),
+            "range.merge"       => RangeMerge(req),
+            "range.unmerge"     => RangeUnmerge(req),
             "range.copy_values" => RangeCopyValues(req),
             "inspect"           => Inspect(req),
             "set_format"        => SetFormat(req),
@@ -29,7 +31,7 @@ public static class Ops
             "sheet.delete"      => SheetDelete(req),
             _ => throw new OpException(ErrorCategory.Unknown,
                 $"unknown op: {req.Op}",
-                hint: "supported: cell.write, range.read, range.write_bulk, range.clear, range.copy_values, inspect, set_format, row.insert, row.delete, sheet.add, sheet.rename, sheet.delete"),
+                hint: "supported: cell.write, range.read, range.write_bulk, range.clear, range.merge, range.unmerge, range.copy_values, inspect, set_format, row.insert, row.delete, sheet.add, sheet.rename, sheet.delete"),
         };
     }
 
@@ -228,6 +230,85 @@ public static class Ops
         worksheet.Save();
         return new { cleared = true };
     }
+
+    // ---------------------------------------------------------------------------
+    // range.merge
+    // ---------------------------------------------------------------------------
+
+    private static object RangeMerge(OpRequest req)
+    {
+        if (!File.Exists(req.Path))
+            throw new OpException(ErrorCategory.FileNotFound, $"File not found: {req.Path}");
+
+        string? rangeAddr = req.Target?.Range;
+        if (string.IsNullOrWhiteSpace(rangeAddr))
+            throw new OpException(ErrorCategory.InvalidArg, "range.merge requires target.range");
+        if (!rangeAddr.Contains(':'))
+            throw new OpException(ErrorCategory.InvalidArg,
+                "range.merge requires a multi-cell range (e.g. A1:C3)");
+
+        ValidateSaveAsFormat(req);
+        using var doc = OpenDocument(req);
+        var workbookPart = doc.WorkbookPart
+            ?? throw new OpException(ErrorCategory.Unknown, "Workbook part missing");
+        WorksheetPart worksheetPart = ResolveWorksheetPart(workbookPart, req.Target?.Sheet);
+        Worksheet worksheet = worksheetPart.Worksheet;
+
+        var sheetData = worksheet.GetFirstChild<SheetData>()
+            ?? throw new InvalidOperationException("Worksheet has no SheetData element");
+
+        var mergeCells = worksheet.GetFirstChild<MergeCells>();
+        if (mergeCells is null)
+        {
+            // Per the SpreadsheetML schema, mergeCells follows sheetData.
+            mergeCells = new MergeCells();
+            worksheet.InsertAfter(mergeCells, sheetData);
+        }
+
+        bool exists = mergeCells.Elements<MergeCell>()
+            .Any(m => string.Equals(m.Reference?.Value, rangeAddr, StringComparison.OrdinalIgnoreCase));
+        if (!exists)
+            mergeCells.AppendChild(new MergeCell { Reference = rangeAddr });
+
+        worksheet.Save();
+        return new { merged = true };
+    }
+
+    // ---------------------------------------------------------------------------
+    // range.unmerge
+    // ---------------------------------------------------------------------------
+
+    private static object RangeUnmerge(OpRequest req)
+    {
+        if (!File.Exists(req.Path))
+            throw new OpException(ErrorCategory.FileNotFound, $"File not found: {req.Path}");
+
+        string? rangeAddr = req.Target?.Range;
+        if (string.IsNullOrWhiteSpace(rangeAddr))
+            throw new OpException(ErrorCategory.InvalidArg, "range.unmerge requires target.range");
+
+        ValidateSaveAsFormat(req);
+        using var doc = OpenDocument(req);
+        var workbookPart = doc.WorkbookPart
+            ?? throw new OpException(ErrorCategory.Unknown, "Workbook part missing");
+        WorksheetPart worksheetPart = ResolveWorksheetPart(workbookPart, req.Target?.Sheet);
+        Worksheet worksheet = worksheetPart.Worksheet;
+
+        var mergeCells = worksheet.GetFirstChild<MergeCells>();
+        if (mergeCells is not null)
+        {
+            var toRemove = mergeCells.Elements<MergeCell>()
+                .Where(m => string.Equals(m.Reference?.Value, rangeAddr, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            foreach (var m in toRemove) mergeCells.RemoveChild(m);
+            if (!mergeCells.Elements<MergeCell>().Any())
+                worksheet.RemoveChild(mergeCells);
+        }
+
+        worksheet.Save();
+        return new { unmerged = true };
+    }
+
 
     // ---------------------------------------------------------------------------
     // range.copy_values

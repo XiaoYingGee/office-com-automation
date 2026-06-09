@@ -362,6 +362,65 @@ fn range_clear(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
 }
 
 // ---------------------------------------------------------------------------
+// range.merge / range.unmerge
+// ---------------------------------------------------------------------------
+fn range_merge(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
+    let range_addr = req.target.as_ref()
+        .and_then(|t| t.range.as_deref())
+        .ok_or_else(|| excel_err(ErrorCategory::InvalidArg, "range.merge requires target.range"))?;
+
+    if !range_addr.contains(':') {
+        return Err(excel_err(ErrorCategory::InvalidArg, "range.merge requires a multi-cell range (e.g. A1:C3)"));
+    }
+
+    let sheet_name = req.target.as_ref().and_then(|t| t.sheet.clone());
+
+    if !std::path::Path::new(&req.path).exists() {
+        return Err(excel_err(ErrorCategory::FileNotFound, format!("file not found: {}", req.path)));
+    }
+
+    let excel = ExcelApp::new().map_err(|e| map_com_error(&e))?;
+    let native_path = win_path(&req.path);
+    let wb = excel.open_workbook(&native_path).map_err(|e| map_com_error(&e))?;
+
+    let ws = resolve_sheet_write(&excel, &wb, &sheet_name)?;
+    let rng = excel.get_range(&ws, range_addr).map_err(|e| map_com_error(&e))?;
+
+    // Merge(Across=false) — collapse the whole range into a single merged cell.
+    rng.call("Merge", &[vbool(false)]).map_err(|e| map_com_error(&e))?;
+
+    save_and_close(&wb, &req)?;
+
+    Ok(json!({"merged": true}))
+}
+
+fn range_unmerge(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
+    let range_addr = req.target.as_ref()
+        .and_then(|t| t.range.as_deref())
+        .ok_or_else(|| excel_err(ErrorCategory::InvalidArg, "range.unmerge requires target.range"))?;
+
+    let sheet_name = req.target.as_ref().and_then(|t| t.sheet.clone());
+
+    if !std::path::Path::new(&req.path).exists() {
+        return Err(excel_err(ErrorCategory::FileNotFound, format!("file not found: {}", req.path)));
+    }
+
+    let excel = ExcelApp::new().map_err(|e| map_com_error(&e))?;
+    let native_path = win_path(&req.path);
+    let wb = excel.open_workbook(&native_path).map_err(|e| map_com_error(&e))?;
+
+    let ws = resolve_sheet_write(&excel, &wb, &sheet_name)?;
+    let rng = excel.get_range(&ws, range_addr).map_err(|e| map_com_error(&e))?;
+
+    rng.call("UnMerge", &[]).map_err(|e| map_com_error(&e))?;
+
+    save_and_close(&wb, &req)?;
+
+    Ok(json!({"unmerged": true}))
+}
+
+
+// ---------------------------------------------------------------------------
 // range.copy_values
 // ---------------------------------------------------------------------------
 fn range_copy_values(req: OpRequest) -> Result<serde_json::Value, ExcelError> {
@@ -640,6 +699,8 @@ pub fn execute(req: OpRequest) -> OpResponse {
         "range.read"        => range_read(req),
         "range.write_bulk"  => range_write_bulk(req),
         "range.clear"       => range_clear(req),
+        "range.merge"       => range_merge(req),
+        "range.unmerge"     => range_unmerge(req),
         "range.copy_values" => range_copy_values(req),
         "inspect"           => inspect(req),
         "set_format"        => set_format(req),
@@ -651,7 +712,7 @@ pub fn execute(req: OpRequest) -> OpResponse {
         other => return OpResponse::err(excel_err_hint(
             ErrorCategory::Unknown,
             format!("unknown op: {other}"),
-            "supported: cell.write, range.read, range.write_bulk, range.clear, range.copy_values, inspect, set_format, row.insert, row.delete, sheet.add, sheet.rename, sheet.delete",
+            "supported: cell.write, range.read, range.write_bulk, range.clear, range.merge, range.unmerge, range.copy_values, inspect, set_format, row.insert, row.delete, sheet.add, sheet.rename, sheet.delete",
         )),
     };
     match result {

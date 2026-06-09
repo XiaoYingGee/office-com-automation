@@ -1,0 +1,312 @@
+{
+  "empty": {
+    "pywin32": {
+      "B0_open": {
+        "note": "N/A (no file)"
+      },
+      "B1_cell_write": {
+        "ops": 5,
+        "total_ms": 487.7,
+        "avg_ms": 97.5
+      },
+      "B2_write_bulk_100x10": {
+        "ops": 1,
+        "total_ms": 33.2
+      },
+      "B3_range_read": {
+        "ops": 1,
+        "total_ms": 25.2
+      },
+      "B4_range_clear": {
+        "ops": 1,
+        "total_ms": 26.9
+      },
+      "B5_inspect": {
+        "ops": 1,
+        "total_ms": 28.3
+      },
+      "B6_batch_10_writes": {
+        "ops": 10,
+        "total_ms": 139.0,
+        "avg_ms": 13.9
+      },
+      "B7_set_format": {
+        "ops": 5,
+        "total_ms": 171.6,
+        "avg_ms": 34.3
+      },
+      "B8_insert_rows": {
+        "ops": 1,
+        "total_ms": 38.1
+      },
+      "B9_sheet_ops": {
+        "ops": 3,
+        "total_ms": 51.1,
+        "avg_ms": 17.0
+      },
+      "B10_merge": {
+        "ops": 5,
+        "total_ms": 105.3,
+        "avg_ms": 21.1
+      }
+    },
+    "vba": {
+      "B0_open": {
+        "note": "N/A (no file)"
+      },
+      "B1_cell_write": {
+        "ops": 5,
+        "total_ms": 422.1,
+        "avg_ms": 84.4
+      },
+      "B2_write_bulk_100x10": {
+        "ops": 1,
+        "total_ms": 30.7
+      },
+      "B3_range_read": {
+        "ops": 1,
+        "total_ms": 7.0
+      },
+      "B4_range_clear": {
+        "ops": 1,
+        "total_ms": 19.7
+      },
+      "B5_inspect": {
+        "ops": 1,
+        "total_ms": 13.1
+      },
+      "B6_batch_10_writes": {
+        "ops": 10,
+        "total_ms": 6.5,
+        "avg_ms": 0.7
+      },
+      "B7_set_format": {
+        "ops": 5,
+        "total_ms": 39.4,
+        "avg_ms": 7.9
+      },
+      "B8_insert_rows": {
+        "ops": 1,
+        "total_ms": 14.7
+      },
+      "B9_sheet_ops": {
+        "ops": 3,
+        "total_ms": 19.6,
+        "avg_ms": 6.5
+      },
+      "B10_merge": {
+        "ops": 5,
+        "total_ms": 5.5,
+        "avg_ms": 1.1
+      }
+    }
+  },
+  "medium": {
+    "pywin32": {
+      "B0_open": {
+        "ops": 1,
+        "total_ms": 751.1
+      },
+      "B1_cell_write": {
+        "ops": 5,
+        "total_ms": 424.4,
+        "avg_ms": 84.9
+      },
+      "B2_write_bulk_100x10": {
+        "ops": 1,
+        "total_ms": 26.1
+      },
+      "B3_range_read": {
+        "ops": 1,
+        "total_ms": 13.3
+      },
+      "B4_range_clear": {
+        "ops": 1,
+        "total_ms": 78.0
+      },
+      "B5_inspect": {
+        "ops": 1,
+        "total_ms": 84.5
+      },
+      "B6_batch_10_writes": {
+        "ops": 10,
+        "total_ms": 214.0,
+        "avg_ms": 21.4
+      },
+      "B7_set_format": {
+        "ops": 5,
+        "total_ms": 122.7,
+        "avg_ms": 24.5
+      },
+      "B8_insert_rows": {
+        "ops": 1,
+        "total_ms": 46.4
+      },
+      "B9_sheet_ops": {
+        "ops": 3,
+        "total_ms": 51.5,
+        "avg_ms": 17.2
+      },
+      "B10_merge": {
+        "ops": 5,
+        "total_ms": 203.6,
+        "avg_ms": 40.7
+      }
+    },
+    "vba": {
+      "B0_open": {
+        "ops": 1,
+        "total_ms": 889.0
+      },
+      "B1_cell_write": {
+        "ops": 5,
+        "total_ms": 551.2,
+        "avg_ms": 110.2
+      },
+      "B2_write_bulk_100x10": {
+        "ops": 1,
+        "total_ms": 16.9
+      },
+      "B3_range_read": {
+        "ops": 1,
+        "total_ms": 4.1
+      },
+      "B4_range_clear": {
+        "ops": 1,
+        "total_ms": 6.2
+      },
+      "B5_inspect": {
+        "ops": 1,
+        "total_ms": 4.1
+      },
+      "B6_batch_10_writes": {
+        "ops": 10,
+        "total_ms": 6.0,
+        "avg_ms": 0.6
+      },
+      "B7_set_format": {
+        "ops": 5,
+        "total_ms": 26.3,
+        "avg_ms": 5.3
+      },
+      "B8_insert_rows": {
+        "ops": 1,
+        "total_ms": 12.9
+      },
+      "B9_sheet_ops": {
+        "ops": 3,
+        "total_ms": 15.3,
+        "avg_ms": 5.1
+      },
+      "B10_merge": {
+        "ops": 5,
+        "total_ms": 4.5,
+        "avg_ms": 0.9
+      }
+    }
+  },
+  "large": {
+    "pywin32": {
+      "B0_open": {
+        "ops": 1,
+        "total_ms": 18532.1
+      },
+      "B1_cell_write": {
+        "ops": 5,
+        "total_ms": 452.2,
+        "avg_ms": 90.4
+      },
+      "B2_write_bulk_100x10": {
+        "ops": 1,
+        "total_ms": 23.4
+      },
+      "B3_range_read": {
+        "ops": 1,
+        "total_ms": 16.1
+      },
+      "B4_range_clear": {
+        "ops": 1,
+        "total_ms": 105.2
+      },
+      "B5_inspect": {
+        "ops": 1,
+        "total_ms": 504.5
+      },
+      "B6_batch_10_writes": {
+        "ops": 10,
+        "total_ms": 147.2,
+        "avg_ms": 14.7
+      },
+      "B7_set_format": {
+        "ops": 5,
+        "total_ms": 173.0,
+        "avg_ms": 34.6
+      },
+      "B8_insert_rows": {
+        "ops": 1,
+        "total_ms": 149.6
+      },
+      "B9_sheet_ops": {
+        "ops": 3,
+        "total_ms": 64.8,
+        "avg_ms": 21.6
+      },
+      "B10_merge": {
+        "ops": 5,
+        "total_ms": 233.2,
+        "avg_ms": 46.6
+      }
+    },
+    "vba": {
+      "B0_open": {
+        "ops": 1,
+        "total_ms": 18254.7
+      },
+      "B1_cell_write": {
+        "ops": 5,
+        "total_ms": 527.2,
+        "avg_ms": 105.4
+      },
+      "B2_write_bulk_100x10": {
+        "ops": 1,
+        "total_ms": 21.3
+      },
+      "B3_range_read": {
+        "ops": 1,
+        "total_ms": 2.1
+      },
+      "B4_range_clear": {
+        "ops": 1,
+        "total_ms": 10.6
+      },
+      "B5_inspect": {
+        "ops": 1,
+        "total_ms": 120.7
+      },
+      "B6_batch_10_writes": {
+        "ops": 10,
+        "total_ms": 28.5,
+        "avg_ms": 2.8
+      },
+      "B7_set_format": {
+        "ops": 5,
+        "total_ms": 84.4,
+        "avg_ms": 16.9
+      },
+      "B8_insert_rows": {
+        "ops": 1,
+        "total_ms": 117.4
+      },
+      "B9_sheet_ops": {
+        "ops": 3,
+        "total_ms": 21.4,
+        "avg_ms": 7.1
+      },
+      "B10_merge": {
+        "ops": 5,
+        "total_ms": 11.7,
+        "avg_ms": 2.3
+      }
+    }
+  }
+}

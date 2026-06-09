@@ -159,3 +159,22 @@ double VariantToDouble(const _variant_t& v, double defaultVal) {
     if (v.vt == VT_I2) return static_cast<double>(v.iVal);
     return defaultVal;
 }
+
+// ---------------------------------------------------------------------------
+// UTF-8 <-> UTF-16 conversion (Win32 MultiByteToWideChar / WideCharToMultiByte)
+// ---------------------------------------------------------------------------
+std::wstring Utf8ToWString(const std::string& s) {
+    if (s.empty()) return std::wstring();
+    int len = ::MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+    std::wstring w(len, L'\0');
+    ::MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), &w[0], len);
+    return w;
+}
+
+std::string WStringToUtf8(const std::wstring& w) {
+    if (w.empty()) return std::string();
+    int len = ::WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
+    std::string s(len, '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), &s[0], len, nullptr, nullptr);
+    return s;
+}

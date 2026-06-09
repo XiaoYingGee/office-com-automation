@@ -155,6 +155,14 @@ class ExcelCOM:
         else:
             rng.ClearContents()
 
+    def merge_cells(self, sheet, range_addr):
+        ws = self._get_sheet(sheet)
+        ws.Range(range_addr).Merge()
+
+    def unmerge_cells(self, sheet, range_addr):
+        ws = self._get_sheet(sheet)
+        ws.Range(range_addr).UnMerge()
+
     # ---- Formatting ----
     def set_format(self, sheet, range_addr, **kwargs):
         ws = self._get_sheet(sheet)
@@ -345,6 +353,14 @@ def dispatch_action(engine, action):
 
     elif act == "clear_range":
         engine.clear_range(sheet, action["range"], params.get("mode", "contents"))
+        return {"ok": True, "action": act}
+
+    elif act == "merge_cells":
+        engine.merge_cells(sheet, action["range"])
+        return {"ok": True, "action": act}
+
+    elif act == "unmerge_cells":
+        engine.unmerge_cells(sheet, action["range"])
         return {"ok": True, "action": act}
 
     elif act == "set_format":
