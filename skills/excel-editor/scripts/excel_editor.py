@@ -267,6 +267,305 @@ class ExcelCOM:
     def export_pdf(self, output_path):
         self.wb.ExportAsFixedFormat(0, os.path.abspath(output_path))
 
+    def export_image(self, sheet, output_path, width=1024, height=768):
+        ws = self._get_sheet(sheet)
+        chart = self.wb.Charts.Add()
+        chart.Location(2, ws.Name)  # xlLocationAsObject
+        ws.ChartObjects(ws.ChartObjects().Count).Delete()
+        ws.UsedRange.CopyPicture(1, 2)  # xlScreen, xlBitmap
+        chart_obj = ws.ChartObjects().Add(0, 0, width, height)
+        chart_obj.Chart.Paste()
+        chart_obj.Chart.Export(os.path.abspath(output_path), "PNG")
+        chart_obj.Delete()
+
+    # ---- Area operations ----
+    def copy_values(self, sheet, src_range, dst_range):
+        ws = self._get_sheet(sheet)
+        val = ws.Range(src_range).Value2
+        ws.Range(dst_range).Value2 = val
+
+    def paste_special(self, sheet, src_range, dst_range, paste_type="values"):
+        ws = self._get_sheet(sheet)
+        ws.Range(src_range).Copy()
+        paste_map = {"values": -4163, "formulas": -4123, "formats": -4122, "all": -4104}
+        ws.Range(dst_range).PasteSpecial(Paste=paste_map.get(paste_type, -4163))
+        self.app.CutCopyMode = False
+
+    def auto_fill(self, sheet, src_range, fill_range):
+        ws = self._get_sheet(sheet)
+        ws.Range(src_range).AutoFill(ws.Range(fill_range))
+
+    # ---- Borders ----
+    def set_border(self, sheet, range_addr, style=1, color=0, weight=2, edges="all"):
+        ws = self._get_sheet(sheet)
+        rng = ws.Range(range_addr)
+        edge_map = {"left": 7, "right": 10, "top": 8, "bottom": 9,
+                    "inside_h": 12, "inside_v": 11}
+        if edges == "all":
+            targets = [7, 8, 9, 10, 11, 12]
+        else:
+            targets = [edge_map[e.strip()] for e in edges.split(",") if e.strip() in edge_map]
+        for idx in targets:
+            border = rng.Borders(idx)
+            border.LineStyle = style
+            border.Color = color
+            border.Weight = weight
+
+    # ---- Conditional formatting ----
+    def add_conditional_format(self, sheet, range_addr, rule_type="cell_value",
+                               operator=3, value=None, format_params=None):
+        ws = self._get_sheet(sheet)
+        rng = ws.Range(range_addr)
+        if rule_type == "cell_value":
+            cf = rng.FormatConditions.Add(1, operator, value)
+        elif rule_type == "formula":
+            cf = rng.FormatConditions.Add(2, Formula1=value)
+        else:
+            return
+        if format_params:
+            if "font_color" in format_params:
+                cf.Font.Color = format_params["font_color"]
+            if "bg_color" in format_params:
+                cf.Interior.Color = format_params["bg_color"]
+            if "bold" in format_params:
+                cf.Font.Bold = format_params["bold"]
+
+    def clear_conditional_format(self, sheet, range_addr):
+        ws = self._get_sheet(sheet)
+        ws.Range(range_addr).FormatConditions.Delete()
+
+    # ---- Row/Col dimensions ----
+    def set_row_height(self, sheet, row, height):
+        ws = self._get_sheet(sheet)
+        ws.Rows(row).RowHeight = height
+
+    def set_col_width(self, sheet, col, width):
+        ws = self._get_sheet(sheet)
+        ws.Columns(col).ColumnWidth = width
+
+    # ---- Grouping ----
+    def group_rows(self, sheet, start_row, end_row):
+        ws = self._get_sheet(sheet)
+        ws.Rows(f"{start_row}:{end_row}").Group()
+
+    def ungroup_rows(self, sheet, start_row, end_row):
+        ws = self._get_sheet(sheet)
+        ws.Rows(f"{start_row}:{end_row}").Ungroup()
+
+    def group_cols(self, sheet, start_col, end_col):
+        ws = self._get_sheet(sheet)
+        ws.Columns(f"{start_col}:{end_col}").Group()
+
+    def ungroup_cols(self, sheet, start_col, end_col):
+        ws = self._get_sheet(sheet)
+        ws.Columns(f"{start_col}:{end_col}").Ungroup()
+
+    # ---- Hide/Unhide ----
+    def hide_rows(self, sheet, start_row, end_row):
+        ws = self._get_sheet(sheet)
+        ws.Rows(f"{start_row}:{end_row}").Hidden = True
+
+    def unhide_rows(self, sheet, start_row, end_row):
+        ws = self._get_sheet(sheet)
+        ws.Rows(f"{start_row}:{end_row}").Hidden = False
+
+    def hide_cols(self, sheet, start_col, end_col):
+        ws = self._get_sheet(sheet)
+        ws.Columns(f"{start_col}:{end_col}").Hidden = True
+
+    def unhide_cols(self, sheet, start_col, end_col):
+        ws = self._get_sheet(sheet)
+        ws.Columns(f"{start_col}:{end_col}").Hidden = False
+
+    # ---- Sheet management ----
+    def copy_sheet(self, sheet, before=None, after=None):
+        ws = self._get_sheet(sheet)
+        if after:
+            ws.Copy(After=self._get_sheet(after))
+        elif before:
+            ws.Copy(Before=self._get_sheet(before))
+        else:
+            ws.Copy(After=self.wb.Worksheets(self.wb.Worksheets.Count))
+        return self.app.ActiveSheet.Name
+
+    def move_sheet(self, sheet, before=None, after=None):
+        ws = self._get_sheet(sheet)
+        if after:
+            ws.Move(After=self._get_sheet(after))
+        elif before:
+            ws.Move(Before=self._get_sheet(before))
+
+    def protect_sheet(self, sheet, password=None):
+        ws = self._get_sheet(sheet)
+        if password:
+            ws.Protect(Password=password)
+        else:
+            ws.Protect()
+
+    def unprotect_sheet(self, sheet, password=None):
+        ws = self._get_sheet(sheet)
+        if password:
+            ws.Unprotect(Password=password)
+        else:
+            ws.Unprotect()
+
+    def freeze_panes(self, sheet, row, col):
+        ws = self._get_sheet(sheet)
+        self.app.Goto(ws.Cells(row, col))
+        self.app.ActiveWindow.FreezePanes = True
+
+    def unfreeze_panes(self):
+        self.app.ActiveWindow.FreezePanes = False
+
+    # ---- Data operations ----
+    def add_validation(self, sheet, range_addr, val_type="list", formula=None, values=None):
+        ws = self._get_sheet(sheet)
+        rng = ws.Range(range_addr)
+        rng.Validation.Delete()
+        type_map = {"list": 3, "whole": 1, "decimal": 2, "text_length": 6}
+        xl_type = type_map.get(val_type, 3)
+        if val_type == "list" and values:
+            formula1 = ",".join(str(v) for v in values)
+            rng.Validation.Add(xl_type, 1, 1, formula1)
+        elif formula:
+            rng.Validation.Add(xl_type, 1, 1, formula)
+
+    def clear_validation(self, sheet, range_addr):
+        ws = self._get_sheet(sheet)
+        ws.Range(range_addr).Validation.Delete()
+
+    def add_named_range(self, name, refers_to):
+        self.wb.Names.Add(Name=name, RefersTo=refers_to)
+
+    def delete_named_range(self, name):
+        self.wb.Names(name).Delete()
+
+    # ---- Charts ----
+    def add_chart(self, sheet, chart_type="xlColumnClustered", data_range=None,
+                  left=100, top=100, width=400, height=300):
+        ws = self._get_sheet(sheet)
+        chart_obj = ws.ChartObjects().Add(left, top, width, height)
+        chart = chart_obj.Chart
+        type_map = {"xlColumnClustered": 51, "xlLine": 4, "xlPie": 5,
+                    "xlBarClustered": 57, "xlArea": 1, "xlXYScatter": -4169}
+        chart.ChartType = type_map.get(chart_type, 51)
+        if data_range:
+            chart.SetSourceData(ws.Range(data_range))
+        return chart_obj.Name
+
+    def delete_chart(self, sheet, chart_name):
+        ws = self._get_sheet(sheet)
+        ws.ChartObjects(chart_name).Delete()
+
+    def modify_chart(self, sheet, chart_name, chart_type):
+        ws = self._get_sheet(sheet)
+        type_map = {"xlColumnClustered": 51, "xlLine": 4, "xlPie": 5,
+                    "xlBarClustered": 57, "xlArea": 1, "xlXYScatter": -4169}
+        ws.ChartObjects(chart_name).Chart.ChartType = type_map.get(chart_type, 51)
+
+    def set_chart_title(self, sheet, chart_name, title):
+        ws = self._get_sheet(sheet)
+        chart = ws.ChartObjects(chart_name).Chart
+        chart.HasTitle = True
+        chart.ChartTitle.Text = title
+
+    # ---- Pictures ----
+    def add_picture(self, sheet, path, left=0, top=0, width=-1, height=-1):
+        ws = self._get_sheet(sheet)
+        pic = ws.Shapes.AddPicture(
+            os.path.abspath(path), False, True, left, top,
+            width if width > 0 else -1, height if height > 0 else -1)
+        return pic.Name
+
+    def delete_picture(self, sheet, name):
+        ws = self._get_sheet(sheet)
+        ws.Shapes(name).Delete()
+
+    # ---- Comments ----
+    def add_comment(self, sheet, cell, text, author=None):
+        ws = self._get_sheet(sheet)
+        rng = ws.Range(cell)
+        try:
+            rng.Comment.Delete()
+        except Exception:
+            pass
+        rng.AddComment(text)
+        if author:
+            rng.Comment.Author = author
+
+    def delete_comment(self, sheet, cell):
+        ws = self._get_sheet(sheet)
+        ws.Range(cell).Comment.Delete()
+
+    # ---- Hyperlinks ----
+    def add_hyperlink(self, sheet, cell, url, display_text=None):
+        ws = self._get_sheet(sheet)
+        rng = ws.Range(cell)
+        ws.Hyperlinks.Add(Anchor=rng, Address=url,
+                          TextToDisplay=display_text or url)
+
+    def delete_hyperlink(self, sheet, cell):
+        ws = self._get_sheet(sheet)
+        rng = ws.Range(cell)
+        for hl in ws.Hyperlinks:
+            if hl.Range.Address == rng.Address:
+                hl.Delete()
+                break
+
+    # ---- Page setup ----
+    def set_page_setup(self, sheet, **kwargs):
+        ws = self._get_sheet(sheet)
+        ps = ws.PageSetup
+        if "orientation" in kwargs:
+            ps.Orientation = 2 if kwargs["orientation"] == "landscape" else 1
+        if "paper_size" in kwargs:
+            ps.PaperSize = kwargs["paper_size"]
+        if "left_margin" in kwargs:
+            ps.LeftMargin = kwargs["left_margin"]
+        if "right_margin" in kwargs:
+            ps.RightMargin = kwargs["right_margin"]
+        if "top_margin" in kwargs:
+            ps.TopMargin = kwargs["top_margin"]
+        if "bottom_margin" in kwargs:
+            ps.BottomMargin = kwargs["bottom_margin"]
+        if "header" in kwargs:
+            ps.CenterHeader = kwargs["header"]
+        if "footer" in kwargs:
+            ps.CenterFooter = kwargs["footer"]
+        if "fit_to_pages_wide" in kwargs:
+            ps.FitToPagesWide = kwargs["fit_to_pages_wide"]
+        if "fit_to_pages_tall" in kwargs:
+            ps.FitToPagesTall = kwargs["fit_to_pages_tall"]
+
+    # ---- Macros ----
+    def run_macro(self, macro_name, *args):
+        if args:
+            return self.app.Run(macro_name, *args)
+        return self.app.Run(macro_name)
+
+    # ---- Pivot tables ----
+    def add_pivot_table(self, sheet, source_range, dest_sheet, dest_cell,
+                        table_name="PivotTable1", rows=None, cols=None, values=None):
+        ws = self._get_sheet(sheet)
+        src = ws.Range(source_range)
+        pc = self.wb.PivotCaches().Create(1, src)  # xlDatabase
+        dest_ws = self._get_sheet(dest_sheet)
+        pt = pc.CreatePivotTable(dest_ws.Range(dest_cell), table_name)
+        if rows:
+            for field_name in rows:
+                pt.PivotFields(field_name).Orientation = 1  # xlRowField
+        if cols:
+            for field_name in cols:
+                pt.PivotFields(field_name).Orientation = 2  # xlColumnField
+        if values:
+            for field_name in values:
+                pt.AddDataField(pt.PivotFields(field_name))
+        return table_name
+
+    def refresh_pivot(self, sheet, table_name):
+        ws = self._get_sheet(sheet)
+        ws.PivotTables(table_name).RefreshTable()
+
     # ---- Helpers ----
     def _get_sheet(self, name_or_index):
         if isinstance(name_or_index, int):
@@ -417,6 +716,179 @@ def dispatch_action(engine, action):
 
     elif act == "export_pdf":
         engine.export_pdf(action["path"])
+        return {"ok": True, "action": act}
+
+    elif act == "export_image":
+        engine.export_image(sheet, action["path"], params.get("width", 1024), params.get("height", 768))
+        return {"ok": True, "action": act}
+
+    elif act == "copy_values":
+        engine.copy_values(sheet, action["src_range"], action["dst_range"])
+        return {"ok": True, "action": act}
+
+    elif act == "paste_special":
+        engine.paste_special(sheet, action["src_range"], action["dst_range"], params.get("paste_type", "values"))
+        return {"ok": True, "action": act}
+
+    elif act == "auto_fill":
+        engine.auto_fill(sheet, action["src_range"], action["fill_range"])
+        return {"ok": True, "action": act}
+
+    elif act == "set_border":
+        engine.set_border(sheet, action["range"], params.get("style", 1),
+                          params.get("color", 0), params.get("weight", 2), params.get("edges", "all"))
+        return {"ok": True, "action": act}
+
+    elif act == "add_conditional_format":
+        engine.add_conditional_format(sheet, action["range"], params.get("rule_type", "cell_value"),
+                                       params.get("operator", 3), params.get("value"),
+                                       params.get("format"))
+        return {"ok": True, "action": act}
+
+    elif act == "clear_conditional_format":
+        engine.clear_conditional_format(sheet, action["range"])
+        return {"ok": True, "action": act}
+
+    elif act == "set_row_height":
+        engine.set_row_height(sheet, action["row"], action["height"])
+        return {"ok": True, "action": act}
+
+    elif act == "set_col_width":
+        engine.set_col_width(sheet, action["col"], action["width"])
+        return {"ok": True, "action": act}
+
+    elif act == "group_rows":
+        engine.group_rows(sheet, action["start_row"], action["end_row"])
+        return {"ok": True, "action": act}
+
+    elif act == "ungroup_rows":
+        engine.ungroup_rows(sheet, action["start_row"], action["end_row"])
+        return {"ok": True, "action": act}
+
+    elif act == "group_cols":
+        engine.group_cols(sheet, action["start_col"], action["end_col"])
+        return {"ok": True, "action": act}
+
+    elif act == "ungroup_cols":
+        engine.ungroup_cols(sheet, action["start_col"], action["end_col"])
+        return {"ok": True, "action": act}
+
+    elif act == "hide_rows":
+        engine.hide_rows(sheet, action["start_row"], action["end_row"])
+        return {"ok": True, "action": act}
+
+    elif act == "unhide_rows":
+        engine.unhide_rows(sheet, action["start_row"], action["end_row"])
+        return {"ok": True, "action": act}
+
+    elif act == "hide_cols":
+        engine.hide_cols(sheet, action["start_col"], action["end_col"])
+        return {"ok": True, "action": act}
+
+    elif act == "unhide_cols":
+        engine.unhide_cols(sheet, action["start_col"], action["end_col"])
+        return {"ok": True, "action": act}
+
+    elif act == "copy_sheet":
+        name = engine.copy_sheet(sheet, params.get("before"), params.get("after"))
+        return {"ok": True, "action": act, "name": name}
+
+    elif act == "move_sheet":
+        engine.move_sheet(sheet, params.get("before"), params.get("after"))
+        return {"ok": True, "action": act}
+
+    elif act == "protect_sheet":
+        engine.protect_sheet(sheet, params.get("password"))
+        return {"ok": True, "action": act}
+
+    elif act == "unprotect_sheet":
+        engine.unprotect_sheet(sheet, params.get("password"))
+        return {"ok": True, "action": act}
+
+    elif act == "freeze_panes":
+        engine.freeze_panes(sheet, action["row"], action["col"])
+        return {"ok": True, "action": act}
+
+    elif act == "unfreeze_panes":
+        engine.unfreeze_panes()
+        return {"ok": True, "action": act}
+
+    elif act == "add_validation":
+        engine.add_validation(sheet, action["range"], params.get("type", "list"),
+                              params.get("formula"), params.get("values"))
+        return {"ok": True, "action": act}
+
+    elif act == "clear_validation":
+        engine.clear_validation(sheet, action["range"])
+        return {"ok": True, "action": act}
+
+    elif act == "add_named_range":
+        engine.add_named_range(action["name"], action["refers_to"])
+        return {"ok": True, "action": act}
+
+    elif act == "delete_named_range":
+        engine.delete_named_range(action["name"])
+        return {"ok": True, "action": act}
+
+    elif act == "add_chart":
+        name = engine.add_chart(sheet, params.get("chart_type", "xlColumnClustered"),
+                                action.get("data_range"), params.get("left", 100),
+                                params.get("top", 100), params.get("width", 400), params.get("height", 300))
+        return {"ok": True, "action": act, "name": name}
+
+    elif act == "delete_chart":
+        engine.delete_chart(sheet, action["chart_name"])
+        return {"ok": True, "action": act}
+
+    elif act == "modify_chart":
+        engine.modify_chart(sheet, action["chart_name"], params.get("chart_type", "xlColumnClustered"))
+        return {"ok": True, "action": act}
+
+    elif act == "set_chart_title":
+        engine.set_chart_title(sheet, action["chart_name"], action["title"])
+        return {"ok": True, "action": act}
+
+    elif act == "add_picture":
+        name = engine.add_picture(sheet, action["path"], params.get("left", 0),
+                                  params.get("top", 0), params.get("width", -1), params.get("height", -1))
+        return {"ok": True, "action": act, "name": name}
+
+    elif act == "delete_picture":
+        engine.delete_picture(sheet, action["name"])
+        return {"ok": True, "action": act}
+
+    elif act == "add_comment":
+        engine.add_comment(sheet, action["cell"], action["text"], params.get("author"))
+        return {"ok": True, "action": act}
+
+    elif act == "delete_comment":
+        engine.delete_comment(sheet, action["cell"])
+        return {"ok": True, "action": act}
+
+    elif act == "add_hyperlink":
+        engine.add_hyperlink(sheet, action["cell"], action["url"], params.get("display_text"))
+        return {"ok": True, "action": act}
+
+    elif act == "delete_hyperlink":
+        engine.delete_hyperlink(sheet, action["cell"])
+        return {"ok": True, "action": act}
+
+    elif act == "set_page_setup":
+        engine.set_page_setup(sheet, **params)
+        return {"ok": True, "action": act}
+
+    elif act == "run_macro":
+        result = engine.run_macro(action["macro_name"], *action.get("args", []))
+        return {"ok": True, "action": act, "result": result}
+
+    elif act == "add_pivot_table":
+        name = engine.add_pivot_table(sheet, action["source_range"], action["dest_sheet"],
+                                       action["dest_cell"], params.get("table_name", "PivotTable1"),
+                                       params.get("rows"), params.get("cols"), params.get("values"))
+        return {"ok": True, "action": act, "name": name}
+
+    elif act == "refresh_pivot":
+        engine.refresh_pivot(sheet, action["table_name"])
         return {"ok": True, "action": act}
 
     else:
