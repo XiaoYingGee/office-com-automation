@@ -72,7 +72,10 @@ class ExcelEditorPyAddin:
     _public_methods_ = [
         "Ping",
         "InspectJson",
+        "InspectSheetJson",
         "ExecuteActionJson",
+        "ExecuteActionsJson",
+        "ExecuteCode",
         "RequestComAddInAutomationService",
     ]
 
@@ -154,6 +157,57 @@ class ExcelEditorPyAddin:
         action = json.loads(actionJson)
         result = self._dispatch(engine, action)
         return json.dumps(result, ensure_ascii=False, default=str)
+
+    def ExecuteActionsJson(self, actionsJson):
+        engine = self._bind_active()
+        actions = json.loads(actionsJson)
+        results = []
+        for action in actions:
+            try:
+                r = self._dispatch(engine, action)
+            except Exception as e:
+                r = {"ok": False, "error": str(e), "action": action.get("action", "")}
+            results.append(r)
+        return json.dumps(results, ensure_ascii=False, default=str)
+
+    def InspectSheetJson(self, paramsJson):
+        engine = self._bind_active()
+        params = json.loads(paramsJson) if paramsJson else {}
+        sheet = params.get("sheet", 1)
+        max_rows = params.get("max_rows", 50)
+        max_cols = params.get("max_cols", 26)
+        result = engine.inspect_sheet(sheet, max_rows, max_cols)
+        return json.dumps(result, ensure_ascii=False, default=str)
+
+    def ExecuteCode(self, code):
+        """Execute arbitrary Python code in-process.
+
+        Available variables:
+            app  - Excel.Application (COM object, in-process)
+            wb   - ActiveWorkbook
+            ws   - ActiveSheet
+            result - set this to return data to the caller
+
+        Returns JSON: {"ok": true, "result": ...} or {"ok": false, "error": ..., "traceback": ...}
+        """
+        self._bind_active()
+        local_vars = {
+            "app": self._app,
+            "wb": self._engine.wb,
+            "ws": self._engine.wb.ActiveSheet if self._engine.wb else None,
+            "result": None,
+            "json": json,
+            "os": os,
+        }
+        try:
+            exec(code, {"__builtins__": __builtins__}, local_vars)
+            return json.dumps({"ok": True, "result": local_vars.get("result")},
+                              ensure_ascii=False, default=str)
+        except Exception as e:
+            import traceback
+            return json.dumps({"ok": False, "error": str(e),
+                              "traceback": traceback.format_exc()},
+                             ensure_ascii=False)
 
 
 # ---- register / unregister ----
