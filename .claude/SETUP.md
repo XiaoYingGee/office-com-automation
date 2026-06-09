@@ -63,7 +63,17 @@ claude
 ```bash
 claude mcp add excel-pywin32 -- py D:\Workspace\AI\office-com-automation\mcp_server\excel_mcp.py
 claude mcp add excel-csharp -- D:\Workspace\AI\office-com-automation\mcp_server_csharp\ExcelMcp\bin\Release\net48\ExcelMcp.exe
+claude mcp add excel-dotnet -- dotnet run --project D:\Workspace\AI\office-com-automation\mcp_server_dotnet\ExcelMcpDotnet.csproj
 ```
+
+### 后端对比
+
+| 后端 | 语言 | 需要 | 协议 | 推荐场景 |
+|------|------|------|------|----------|
+| `excel-pywin32` | Python | `pip install pywin32 mcp` | FastMCP SDK | **默认推荐** |
+| `excel-csharp` | C# | 无额外安装 | 手写 JSON-RPC | 无 Python 环境时 |
+| `excel-dotnet` | C# | .NET 8 SDK | 官方 MCP SDK | 正式/生产环境 |
+| `excel-addin` | Python | add-in 注册 | FastMCP SDK | 进程内零 IPC |
 
 或手动 settings.json：
 
@@ -77,6 +87,10 @@ claude mcp add excel-csharp -- D:\Workspace\AI\office-com-automation\mcp_server_
     "excel-csharp": {
       "command": "D:\\Workspace\\AI\\office-com-automation\\mcp_server_csharp\\ExcelMcp\\bin\\Release\\net48\\ExcelMcp.exe",
       "args": []
+    },
+    "excel-dotnet": {
+      "command": "dotnet",
+      "args": ["run", "--project", "D:\\Workspace\\AI\\office-com-automation\\mcp_server_dotnet\\ExcelMcpDotnet.csproj"]
     }
   }
 }
@@ -88,6 +102,7 @@ claude mcp add excel-csharp -- D:\Workspace\AI\office-com-automation\mcp_server_
 claude mcp remove excel-pywin32
 claude mcp remove excel-addin
 claude mcp remove excel-csharp
+claude mcp remove excel-dotnet
 ```
 
 ## 权限配置（免确认）
